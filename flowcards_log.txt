@@ -1,0 +1,85 @@
+[2026-07-18 00:58:45] INFO  ============================================================
+[2026-07-18 00:58:45] INFO    Automatización Flowcards SEO - El Tiempo en Marfeel
+[2026-07-18 00:58:45] INFO    2026-07-18 00:58:45
+[2026-07-18 00:58:45] INFO  ============================================================
+[2026-07-18 00:58:45] INFO  Iniciando sesión manual. Se abrirá el navegador...
+[2026-07-18 00:58:45] INFO  Por favor, inicia sesión en Marfeel. El script esperará hasta que estés en el dashboard.
+[2026-07-18 00:58:48] INFO  Esperando que completes el login... (tienes 3 minutos)
+[2026-07-18 00:58:48] INFO  Una vez en el dashboard de Marfeel, REGRESA A ESTA CONSOLA y presiona ENTER.
+[2026-07-18 01:07:04] INFO  ============================================================
+[2026-07-18 01:07:04] INFO    Automatización Flowcards SEO - El Tiempo en Marfeel
+[2026-07-18 01:07:04] INFO    2026-07-18 01:07:04
+[2026-07-18 01:07:04] INFO  ============================================================
+[2026-07-18 01:07:04] INFO  Iniciando sesión manual. Se abrirá el navegador...
+[2026-07-18 01:07:04] INFO  Por favor, inicia sesión en Marfeel. El script esperará hasta que estés en el dashboard.
+[2026-07-18 01:07:05] INFO  Esperando que completes el login... (tienes 3 minutos)
+[2026-07-18 01:07:05] INFO  Una vez en el dashboard de Marfeel, REGRESA A ESTA CONSOLA y presiona ENTER.
+[2026-07-18 01:08:38] INFO  URL actual: https://hub.marfeel.com/
+[2026-07-18 01:08:39] INFO  Sesión guardada en: C:\Users\photo\Downloads\DESCARGAS\DESCARGAS\PROYECTOS\EL TIEMPO FLOWCARDS\marfeel_session.json
+[2026-07-18 01:08:39] INFO  ✅ Sesión guardada. Ahora puedes ejecutar el script sin --login.
+[2026-07-18 01:08:48] INFO  ============================================================
+[2026-07-18 01:08:48] INFO    Automatización Flowcards SEO - El Tiempo en Marfeel
+[2026-07-18 01:08:48] INFO    2026-07-18 01:08:48
+[2026-07-18 01:08:48] INFO  ============================================================
+[2026-07-18 01:08:48] INFO  Leyendo Excel: C:\Users\photo\Downloads\DESCARGAS\DESCARGAS\PROYECTOS\EL TIEMPO FLOWCARDS\dist\El Tiempo.xlsx
+[2026-07-18 01:08:48] INFO  Se procesarán 1 nota(s):
+[2026-07-18 01:08:48] INFO    [Salud] Supersalud advierte
+[2026-07-18 01:08:48] INFO  Cargando sesión desde: C:\Users\photo\Downloads\DESCARGAS\DESCARGAS\PROYECTOS\EL TIEMPO FLOWCARDS\marfeel_session.json
+[2026-07-18 01:08:48] INFO  
+[1/1] Procesando nota...
+[2026-07-18 01:08:48] INFO  
+────────────────────────────────────────────────────────────
+[2026-07-18 01:08:48] INFO  Procesando: [Salud] Supersalud advierte
+[2026-07-18 01:08:48] INFO    URL: https://www.eltiempo.com/salud/supersalud-advierte-que-no-se-estarian-dispensand...
+[2026-07-18 01:08:48] DEBUG  Navegando a editorial de Marfeel...
+[2026-07-18 01:08:54] DEBUG  Buscando ícono de Flowcards (rayo)...
+[2026-07-18 01:08:55] DEBUG  Click en ícono Flowcards con selector: text=Flowcard
+[2026-07-18 01:08:56] INFO  Buscando Flowcard: 'Flowcard SEO Salud'
+[2026-07-18 01:08:56] DEBUG  Método 1 falló, intentando método 2 (XPath)...
+[2026-07-18 01:08:56] ERROR  No se encontró el Flowcard 'Flowcard SEO Salud' en la página.
+[2026-07-18 01:08:56] DEBUG  Sesión actualizada guardada.
+[2026-07-18 01:08:57] INFO  
+============================================================
+[2026-07-18 01:08:57] INFO    RESUMEN FINAL
+[2026-07-18 01:08:57] INFO  ============================================================
+[2026-07-18 01:08:57] INFO    ✅ Exitosos: 0
+[2026-07-18 01:08:57] INFO    ❌ Errores:  1
+[2026-07-18 01:08:57] INFO    Total:       1
+[2026-07-18 01:08:57] INFO  
+[2026-07-18 01:08:57] INFO    ❌ [Salud] Supersalud advierte
+[2026-07-18 01:08:57] INFO        → Flowcard no encontrado para categoría 'Salud'
+[2026-07-18 01:08:57] INFO  
+Log completo guardado en: C:\Users\photo\Downloads\DESCARGAS\DESCARGAS\PROYECTOS\EL TIEMPO FLOWCARDS\flowcards_log.txt
+[2026-07-18 01:09:52] INFO  ============================================================
+[2026-07-18 01:09:52] INFO    Automatización Flowcards SEO - El Tiempo en Marfeel
+[2026-07-18 01:09:52] INFO    2026-07-18 01:09:52
+[2026-07-18 01:09:52] INFO  ============================================================
+[2026-07-18 01:09:52] INFO  Leyendo Excel: C:\Users\photo\Downloads\DESCARGAS\DESCARGAS\PROYECTOS\EL TIEMPO FLOWCARDS\dist\El Tiempo.xlsx
+[2026-07-18 01:09:52] INFO  Se procesarán 1 nota(s):
+[2026-07-18 01:09:52] INFO    [Salud] Supersalud advierte
+[2026-07-18 01:09:52] INFO  Cargando sesión desde: C:\Users\photo\Downloads\DESCARGAS\DESCARGAS\PROYECTOS\EL TIEMPO FLOWCARDS\marfeel_session.json
+[2026-07-18 01:09:52] INFO  
+[1/1] Procesando nota...
+[2026-07-18 01:09:52] INFO  
+────────────────────────────────────────────────────────────
+[2026-07-18 01:09:52] INFO  Procesando: [Salud] Supersalud advierte
+[2026-07-18 01:09:52] INFO    URL: https://www.eltiempo.com/salud/supersalud-advierte-que-no-se-estarian-dispensand...
+[2026-07-18 01:09:52] DEBUG  Navegando a editorial de Marfeel...
+[2026-07-18 01:09:58] DEBUG  Buscando ícono de Flowcards (rayo)...
+[2026-07-18 01:09:58] DEBUG  Click en ícono Flowcards con selector: text=Flowcard
+[2026-07-18 01:09:59] INFO  Buscando Flowcard: 'Flowcard SEO Salud'
+[2026-07-18 01:10:00] DEBUG  Método 1 falló, intentando método 2 (XPath)...
+[2026-07-18 01:10:00] ERROR  No se encontró el Flowcard 'Flowcard SEO Salud' en la página.
+[2026-07-18 01:10:00] DEBUG  Sesión actualizada guardada.
+[2026-07-18 01:10:00] INFO  
+============================================================
+[2026-07-18 01:10:00] INFO    RESUMEN FINAL
+[2026-07-18 01:10:00] INFO  ============================================================
+[2026-07-18 01:10:00] INFO    ✅ Exitosos: 0
+[2026-07-18 01:10:00] INFO    ❌ Errores:  1
+[2026-07-18 01:10:00] INFO    Total:       1
+[2026-07-18 01:10:00] INFO  
+[2026-07-18 01:10:00] INFO    ❌ [Salud] Supersalud advierte
+[2026-07-18 01:10:00] INFO        → Flowcard no encontrado para categoría 'Salud'
+[2026-07-18 01:10:00] INFO  
+Log completo guardado en: C:\Users\photo\Downloads\DESCARGAS\DESCARGAS\PROYECTOS\EL TIEMPO FLOWCARDS\flowcards_log.txt

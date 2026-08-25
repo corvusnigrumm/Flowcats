@@ -1,0 +1,10 @@
+COMANDO PARA EJECUTAR EN VISUAL STUDIO CODE (O TERMINAL):
+
+Si ya estás dentro de la carpeta (L:\DESCARGAS\PROYECTOS\EL TIEMPO FLOWCARDS), solo pega este comando en la terminal de Visual Studio Code y dale Enter:
+
+python automatizacion_santamaria.py
+
+
+
+SI DA ERROR DE LIBRERÍAS, EJECUTA PRIMERO ESTO:
+pip install requests openpyxl lxml

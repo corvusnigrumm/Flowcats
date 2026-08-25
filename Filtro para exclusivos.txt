@@ -1,0 +1,119 @@
+import requests
+from bs4 import BeautifulSoup
+import json
+
+HEADERS = {
+    User-Agent (
+        Mozilla5.0 (Windows NT 10.0; Win64; x64) 
+        AppleWebKit537.36 (KHTML, like Gecko) 
+        Chrome120.0.0.0 Safari537.36
+    )
+}
+
+def is_subscriber_only(article_tag) - bool
+    
+    Detecta si un artículo es exclusivo para suscriptores.
+    El badge 'ET' puede aparecer de varias formas en el HTML.
+    
+    article_html = str(article_tag)
+
+    # ── Estrategia 1 clases CSS típicas del badge de suscriptor ──
+    SUBSCRIBER_CLASSES = [
+        badge-premium,
+        badge-subscriber,
+        badge-et,
+        premium-badge,
+        icon-et,
+        label-et,
+        suscriptor,
+        paywall,
+    ]
+    for css_class in SUBSCRIBER_CLASSES
+        if article_tag.find(class_=lambda c c and css_class in c.lower())
+            return True
+
+    # ── Estrategia 2 atributos data- de paywall ──
+    PAYWALL_ATTRS = [data-premium, data-paywall, data-subscriber, data-et]
+    for attr in PAYWALL_ATTRS
+        if article_tag.find(attrs={attr True})
+            return True
+
+    # ── Estrategia 3 texto ET visible en un badge pequeño ──
+    for tag in article_tag.find_all([span, div, i, em, label])
+        text = tag.get_text(strip=True)
+        if text == ET
+            return True
+
+    # ── Estrategia 4 keywords en el HTML crudo ──
+    PAYWALL_KEYWORDS = [
+        paywall, premium-content, subscriber-only,
+        solo-suscriptores, exclusive-content
+    ]
+    for kw in PAYWALL_KEYWORDS
+        if kw in article_html.lower()
+            return True
+
+    return False
+
+
+def get_free_articles(url str = httpswww.eltiempo.com) - list[dict]
+    
+    Descarga la portada de El Tiempo y retorna solo
+    los artículos de acceso libre (sin badge ET).
+    
+    response = requests.get(url, headers=HEADERS, timeout=10)
+    response.raise_for_status()
+
+    soup = BeautifulSoup(response.text, html.parser)
+    free_articles = []
+
+    # El Tiempo usa article y también div con clases tipo card, story, etc.
+    candidates = soup.find_all(
+        [article, div],
+        class_=lambda c c and any(
+            kw in c.lower() for kw in [card, story, article, item, news]
+        )
+    )
+
+    for tag in candidates
+        # Saltar si es de suscriptores
+        if is_subscriber_only(tag)
+            continue
+
+        # Extraer enlace
+        link_tag = tag.find(a, href=True)
+        if not link_tag
+            continue
+        href = link_tag[href]
+        if not href.startswith(http)
+            href = httpswww.eltiempo.com + href
+
+        # Extraer titular
+        title_tag = tag.find([h1, h2, h3, h4])
+        title = title_tag.get_text(strip=True) if title_tag else Sin título
+
+        # Evitar duplicados por URL
+        if any(a[url] == href for a in free_articles)
+            continue
+
+        free_articles.append({title title, url href})
+
+    return free_articles
+
+
+if __name__ == __main__
+    print(Scrapeando El Tiempo — solo artículos gratuitos...n)
+    articles = get_free_articles()
+
+    if not articles
+        print(No se encontraron artículos (puede que las clases CSS hayan cambiado).)
+        print(Usa las instrucciones de depuración más abajo.)
+    else
+        for i, art in enumerate(articles, 1)
+            print(f{i3}. {art['title']})
+            print(f     {art['url']}n)
+
+    # Guardar en JSON
+    with open(articulos_libres.json, w, encoding=utf-8) as f
+        json.dump(articles, f, ensure_ascii=False, indent=2)
+    print(fn✅ {len(articles)} artículos guardados en articulos_libres.json)
