@@ -1103,7 +1103,7 @@ def run_scraper():
     current_task = 0
 
     # Directorio actual
-    work_dir = "L:\\DESCARGAS\\PROYECTOS\\EL TIEMPO FLOWCARDS\\"
+    work_dir = os.path.dirname(os.path.abspath(__file__))
     if not os.path.exists(work_dir):
         work_dir = "./"
 
@@ -1214,7 +1214,7 @@ def run_scraper_selected(selected_sources=None, include_amp: bool = True):
         return
 
     current_task = 0
-    work_dir = "L:\\DESCARGAS\\PROYECTOS\\EL TIEMPO FLOWCARDS\\"
+    work_dir = os.path.dirname(os.path.abspath(__file__))
     if not os.path.exists(work_dir):
         work_dir = "./"
 
@@ -1302,9 +1302,16 @@ def run_scraper_selected(selected_sources=None, include_amp: bool = True):
         print(f"\n[!] No se pudo guardar el historial: {e}")
 
 import threading
-import customtkinter as ctk
-from PIL import Image
 import os
+
+try:
+    import customtkinter as ctk
+    from PIL import Image
+    HAS_GUI = True
+except (ImportError, ModuleNotFoundError):
+    ctk = None
+    Image = None
+    HAS_GUI = False
 
 class RealtimeLog:
     def __init__(self, tbox, progress_callback):
@@ -1333,8 +1340,12 @@ class RealtimeLog:
     def flush(self):
         pass
 
-class FlowcatsApp(ctk.CTk):
+_BaseAppClass = ctk.CTk if ctk is not None else object
+
+class FlowcatsApp(_BaseAppClass):
     def __init__(self):
+        if not HAS_GUI or ctk is None:
+            raise RuntimeError("CustomTkinter / Tkinter no está disponible.")
         super().__init__()
         
         # Configuracion de ventana
@@ -1525,6 +1536,16 @@ class FlowcatsApp(ctk.CTk):
         self.destroy()
 
 if __name__ == "__main__":
-    app = FlowcatsApp()
-    app.protocol("WM_DELETE_WINDOW", app.on_closing)
-    app.mainloop()
+    if HAS_GUI and ctk is not None:
+        try:
+            app = FlowcatsApp()
+            app.protocol("WM_DELETE_WINDOW", app.on_closing)
+            app.mainloop()
+        except Exception as e:
+            print(f"[!] Error al iniciar interfaz gráfica: {e}")
+            print("[*] Ejecutando extracción en modo consola (CLI)...")
+            run_scraper_selected(["El Tiempo", "Portafolio"], include_amp=True)
+    else:
+        print("[!] Interfaz gráfica no disponible en este entorno (falta _tkinter / CustomTkinter).")
+        print("[*] Ejecutando extracción en modo consola (CLI)...")
+        run_scraper_selected(["El Tiempo", "Portafolio"], include_amp=True)
