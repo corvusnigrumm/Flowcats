@@ -1,11 +1,11 @@
 services:
   - type: web
-    name: flowcats-web
-    env: python
-    region: ohio
-    plan: free
+    name: flowcats
+    runtime: python
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0

@@ -302,6 +302,7 @@ def api_download_file(filename: str):
     )
 
 
+@app.get("/ping")
 @app.get("/health")
 @app.get("/api/health")
 def health_check():
