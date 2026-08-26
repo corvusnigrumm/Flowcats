@@ -2,11 +2,11 @@
 """
 Flowcats v2.0 · Servidor Web para Render y Plataformas Cloud / Local
 Mesa de Redacción Automatizada:
-- Extracción RSS inteligente de El Tiempo y Portafolio.
-- Titulares Groq AI de 3 palabras clave y análisis SEO.
-- Radar Editorial: Temas del Día (Top 8 noticias con titulares <= 25 caracteres).
-- Descarga directa e individual de libros Excel.
-- Consola de logs en vivo, métricas y panel interactivo.
+- Procesos independientes y separados para El Tiempo y Portafolio.
+- El Tiempo: Extracción de 10-22 categorías + Generación exclusiva de Temas del Día (Top 8 <=25 caracteres con Groq AI).
+- Portafolio: Extracción por 5 grupos económicos/empresariales independientes con deduplicación propia.
+- Descarga directa de libros Excel generados según la selección.
+- Radar Editorial independiente por pestañas (Temas del Día, El Tiempo, Portafolio).
 """
 
 import os
@@ -22,7 +22,6 @@ from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-# Importar funciones del motor de automatización
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
@@ -97,17 +96,19 @@ class LogRedirector:
                     except Exception:
                         pass
                 
-                # Detectar fases para el texto de acción
+                # Fases del proceso
                 if "INICIANDO EXTRACCION PARA: El Tiempo" in msg_str:
                     execution_state["status"] = "Extrayendo categorías de El Tiempo..."
                 elif "INICIANDO EXTRACCION PARA: Portafolio" in msg_str:
-                    execution_state["status"] = "Extrayendo grupos de Portafolio..."
+                    execution_state["status"] = "Extrayendo grupos económicos de Portafolio..."
                 elif "PROCESANDO TEMAS DEL DÍA" in msg_str:
-                    execution_state["status"] = "Sintetizando radar de Temas del Día con IA..."
+                    execution_state["status"] = "Generando Temas del Día (Top 8 El Tiempo con Groq AI)..."
                 elif "Archivo El Tiempo.xlsx generado" in msg_str:
                     execution_state["status"] = "Empaquetando El Tiempo.xlsx..."
                 elif "Archivo Portafolio.xlsx generado" in msg_str:
                     execution_state["status"] = "Empaquetando Portafolio.xlsx..."
+                elif "TEMAS DEL DÍA.xlsx" in msg_str and "Guardado" in msg_str:
+                    execution_state["status"] = "Guardando TEMAS DEL DÍA.xlsx..."
                 
                 execution_state["last_updated"] = time.time()
 
@@ -125,7 +126,7 @@ class RunRequest(BaseModel):
 
 
 def format_article_topic(art: dict, source_name: str) -> dict:
-    """Convierte un artículo del scraper al formato consumido por el radar editorial."""
+    """Convierte un artículo del scraper al formato del radar editorial."""
     title = str(art.get("titulo_raw") or art.get("titulo_flowcard") or "Sin título").strip()
     category = str(art.get("categoria") or "GENERAL").strip().upper()
     score = int(art.get("seo_score") or 80)
@@ -152,6 +153,9 @@ def background_scraper_task(selected_sources: List[str], include_amp: bool):
     original_stdout = sys.stdout
     redirector = LogRedirector(original_stdout)
     
+    run_el_tiempo = "El Tiempo" in selected_sources
+    run_portafolio = "Portafolio" in selected_sources
+
     with state_lock:
         execution_state["running"] = True
         execution_state["progress"] = 2
@@ -159,8 +163,10 @@ def background_scraper_task(selected_sources: List[str], include_amp: bool):
         execution_state["logs"] = [
             "=== INICIANDO PROCESO EN FLOWCATS WEB ===",
             f"[*] Fuentes seleccionadas: {', '.join(selected_sources)}",
+            f"[*] Proceso El Tiempo + Temas del Día: {'Activo' if run_el_tiempo else 'Omitido'}",
+            f"[*] Proceso Portafolio (5 grupos): {'Activo' if run_portafolio else 'Omitido'}",
             f"[*] Incluir URLs AMP: {'Sí' if include_amp else 'No'}",
-            f"[*] Motor Groq AI: {'Activo' if get_groq_api_key() else 'Modo heurístico'}"
+            f"[*] Motor Groq AI: {'Conectado' if get_groq_api_key() else 'Modo heurístico'}"
         ]
         execution_state["files_generated"] = []
         execution_state["topics"] = {"top": [], "El Tiempo": [], "Portafolio": []}
@@ -169,7 +175,6 @@ def background_scraper_task(selected_sources: List[str], include_amp: bool):
     try:
         results = run_scraper_selected(selected_sources, include_amp=include_amp)
         
-        # Procesar temas para el radar editorial
         topics_et = []
         topics_pf = []
         topics_top = []
@@ -179,25 +184,30 @@ def background_scraper_task(selected_sources: List[str], include_amp: bool):
             raw_pf = results.get("Portafolio", [])
             raw_top = results.get("top", [])
             
-            topics_et = [format_article_topic(a, "El Tiempo") for a in raw_et]
-            topics_pf = [format_article_topic(a, "Portafolio") for a in raw_pf]
-            if raw_top:
-                topics_top = [format_article_topic(a, "El Tiempo") for a in raw_top]
-            else:
-                combined = topics_et + topics_pf
-                combined.sort(key=lambda x: x["h"], reverse=True)
-                topics_top = combined[:8]
+            # El Tiempo: categorías individuales
+            if run_el_tiempo and raw_et:
+                topics_et = [format_article_topic(a, "El Tiempo") for a in raw_et]
+                # Temas del Día: Top 8 exclusivo de El Tiempo
+                if raw_top:
+                    topics_top = [format_article_topic(a, "El Tiempo") for a in raw_top]
+            
+            # Portafolio: grupos económicos independientes
+            if run_portafolio and raw_pf:
+                topics_pf = [format_article_topic(a, "Portafolio") for a in raw_pf]
 
-        # Detectar archivos generados existentes en el directorio
+        # Detectar archivos generados correspondientes a la selección
         files = []
-        if "El Tiempo" in selected_sources and os.path.exists(os.path.join(BASE_DIR, "El Tiempo.xlsx")):
-            files.append("El Tiempo.xlsx")
-        if "Portafolio" in selected_sources and os.path.exists(os.path.join(BASE_DIR, "Portafolio.xlsx")):
-            files.append("Portafolio.xlsx")
-        for temas_name in ["TEMAS DEL DÍA.xlsx", "TEMAS DEL DIA.xlsx"]:
-            if os.path.exists(os.path.join(BASE_DIR, temas_name)):
-                files.append(temas_name)
-                break
+        if run_el_tiempo:
+            if os.path.exists(os.path.join(BASE_DIR, "El Tiempo.xlsx")):
+                files.append("El Tiempo.xlsx")
+            for temas_name in ["TEMAS DEL DÍA.xlsx", "TEMAS DEL DIA.xlsx"]:
+                if os.path.exists(os.path.join(BASE_DIR, temas_name)):
+                    files.append(temas_name)
+                    break
+
+        if run_portafolio:
+            if os.path.exists(os.path.join(BASE_DIR, "Portafolio.xlsx")):
+                files.append("Portafolio.xlsx")
 
         with state_lock:
             execution_state["progress"] = 100
@@ -224,7 +234,7 @@ def background_scraper_task(selected_sources: List[str], include_amp: bool):
 @app.post("/api/run")
 def api_run_scraper(req: RunRequest, background_tasks: BackgroundTasks):
     if not req.selected_sources:
-        raise HTTPException(status_code=400, detail="Debes seleccionar al menos una fuente de noticias.")
+        raise HTTPException(status_code=400, detail="Debes seleccionar al menos una fuente de noticias (El Tiempo o Portafolio).")
     
     with state_lock:
         if execution_state["running"]:
@@ -987,7 +997,7 @@ button{font-family:inherit}
       </div>
 
       <div class="topics-tabs" role="tablist">
-        <button class="ttab active" data-tab="top" role="tab"><i class="star">★</i> Top 8 del día <span class="tcount">0</span></button>
+        <button class="ttab active" data-tab="top" role="tab"><i class="star">★</i> Temas del Día (Top 8) <span class="tcount">0</span></button>
         <button class="ttab" data-tab="El Tiempo" role="tab">El Tiempo <span class="tcount">0</span></button>
         <button class="ttab" data-tab="Portafolio" role="tab">Portafolio <span class="tcount">0</span></button>
       </div>
