@@ -212,12 +212,11 @@ STOP_WORDS = {
 # UTILIDADES Y PROCESAMIENTO
 # ─────────────────────────────────────────────
 
-def clean_and_format_title(raw_title: str, max_words: int = 10, max_chars: int = 90) -> str:
+def clean_and_format_title(raw_title: str, max_words: int = 3) -> str:
     """
-    Limpia y da formato profesional al titular periodístico para Flowcards:
-    - Conserva total sentido gramatical, coherencia y sintaxis natural.
-    - Elimina prefijos de ruido ('EXCLUSIVO:', 'EN VIVO:', 'URGENTE:', etc.).
-    - Elimina comillas innecesarias y autorías al final.
+    Formatea el titular periodístico para Flowcards:
+    - MÁXIMO 3 PALABRAS significativas (sin stopwords como el, la, los, las, de, del, en, para, etc.).
+    - Conserva las 3 palabras clave de mayor valor informativo.
     """
     if not raw_title or not str(raw_title).strip():
         return "Sin título"
@@ -228,19 +227,21 @@ def clean_and_format_title(raw_title: str, max_words: int = 10, max_chars: int =
     for pattern in PREFIX_NOISE:
         text = re.sub(pattern, "", text, flags=re.IGNORECASE).strip()
         
-    # 2. Quitar citas/autorías al final (ej: ', según expertos' o ': James Rockall')
+    # 2. Quitar citas/autorías al final
     text = re.sub(r':\s*[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){1,3}\s*$', '', text)
     text = re.sub(r',\s*según\s+.*$', '', text, flags=re.IGNORECASE)
     
-    # 3. Limpiar signos extraños al inicio o fin
-    text = text.strip('"\'“”«» ').rstrip('.,;:-')
+    # 3. Limpiar signos extraños
+    text = re.sub(r'[^\w\sÁÉÍÓÚáéíóúñÑüÜ-]', ' ', text)
     
-    # 4. Si el titular es excesivamente largo, cortar en un límite natural de palabras
-    words = text.split()
-    if len(words) > max_words:
-        text = " ".join(words[:max_words]).rstrip('.,;:-')
+    # 4. Filtrar palabras vacías (stopwords) para obtener exactamente hasta 3 palabras clave
+    words = [w.strip() for w in text.split() if w.strip()]
+    meaningful = [w for w in words if w.lower() not in HANGING_WORDS and len(w) > 1]
+    
+    if not meaningful:
+        meaningful = words
         
-    return text if text else str(raw_title).strip()
+    return " ".join(meaningful[:max_words]).title()
 
 def shorten_title_smart(title: str, max_words: int = 10) -> str:
     """Función de compatibilidad que llama a clean_and_format_title."""
@@ -400,28 +401,27 @@ def analyze_with_groq(article: dict) -> dict | None:
 
     prompt = (
         f"Eres un editor periodístico senior de El Tiempo / Portafolio.\n"
-        f"Tu tarea es generar un titular para Flowcard que sea DIRECTO, IMPACTANTE y con TOTAL SENTIDO GRAMATICAL Y PERIODÍSTICO.\n\n"
+        f"Tu tarea es generar un titular para Flowcard de MÁXIMO 3 PALABRAS CLAVE con total impacto y sentido informativo.\n\n"
         f"DATOS DE LA NOTICIA:\n"
         f"- Categoría: {category}\n"
         f"- Titular original: {raw_title}\n"
         f"- Resumen: {summary}\n\n"
-        f"REGLAS PARA EL TITULAR FLOWCARD:\n"
-        f"1. DEBE tener sentido completo, redacción natural y sintaxis impecable en español.\n"
-        f"2. NO recortes palabras ni dejes frases incoherentes o palabras sueltas sin conexión.\n"
-        f"3. Longitud ideal: 4 a 8 palabras claras que comuniquen con fuerza lo más importante de la noticia.\n"
-        f"4. Evalúa el potencial SEO y de tendencia de 0 a 100.\n\n"
+        f"REGLAS OBLIGATORIAS PARA EL TITULAR FLOWCARD:\n"
+        f"1. MÁXIMO 3 PALABRAS CLAVE (excluyendo conectores como 'el', 'la', 'de', 'del', 'en', 'para', 'con', 'por', 'sus', 'un', 'una', 'al').\n"
+        f"2. Las 3 palabras deben resumir lo más importante de la noticia con total claridad.\n"
+        f"3. Ejemplos excelentes: 'Visas Bogotá Aceleradas', 'Turismo Ballenas Buenaventura', 'Reforma Pensional Corte', 'Tolima Fuera Libertadores'.\n"
+        f"4. Evalúa el potencial SEO y tendencia (0-100).\n\n"
         f'Responde ÚNICAMENTE en formato JSON estructurado:\n'
         f'{{\n'
-        f'  "titulo_flowcard": "Titular con sentido completo y alto impacto",\n'
+        f'  "titulo_flowcard": "Tres Palabras Clave",\n'
         f'  "seo_score": 88,\n'
         f'  "seo_level": "Muy alto",\n'
-        f'  "seo_reason": "Explicación breve del interés periodístico",\n'
-        f'  "keyword_objetivo": "término clave principal",\n'
+        f'  "seo_reason": "Motivo del impacto periodístico",\n'
+        f'  "keyword_objetivo": "término clave",\n'
         f'  "trend_type": "Nacional / Economía / Tendencia"\n'
         f'}}'
     )
 
-    # 1. Intentar con Groq SDK oficial
     try:
         from groq import Groq
         client = Groq(api_key=api_key)
@@ -438,11 +438,11 @@ def analyze_with_groq(article: dict) -> dict | None:
                 chat_completion = client.chat.completions.create(
                     model=m,
                     messages=[
-                        {"role": "system", "content": "Eres un editor periodístico SEO experto. Respondes únicamente en formato JSON válido."},
+                        {"role": "system", "content": "Eres un editor periodístico experto. Generas titulares de exactamente 3 palabras clave y respondes únicamente en formato JSON."},
                         {"role": "user", "content": prompt}
                     ],
-                    temperature=0.4,
-                    max_completion_tokens=1024,
+                    temperature=0.3,
+                    max_completion_tokens=512,
                     response_format={"type": "json_object"}
                 )
                 content_resp = chat_completion.choices[0].message.content
@@ -450,9 +450,10 @@ def analyze_with_groq(article: dict) -> dict | None:
                     data_json = json.loads(content_resp)
                     score = int(data_json.get("seo_score", 80))
                     score = max(0, min(100, score))
-                    titulo_flow = str(data_json.get("titulo_flowcard", "")).strip()
+                    raw_tf = str(data_json.get("titulo_flowcard", "")).strip()
+                    titulo_flow = clean_and_format_title(raw_tf, max_words=3)
                     if not titulo_flow or len(titulo_flow.split()) < 2:
-                        titulo_flow = clean_and_format_title(raw_title)
+                        titulo_flow = clean_and_format_title(raw_title, max_words=3)
                     
                     return {
                         "seo_score": score,
@@ -468,52 +469,13 @@ def analyze_with_groq(article: dict) -> dict | None:
     except Exception:
         pass
 
-    # 2. Fallback vía requests
-    try:
-        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-        for m in ["openai/gpt-oss-120b", "llama-3.3-70b-versatile", "llama3-70b-8192"]:
-            try:
-                payload = {
-                    "model": m,
-                    "messages": [
-                        {"role": "system", "content": "Eres un editor periodístico SEO experto. Respondes exclusivamente en formato JSON estructurado."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    "temperature": 0.4,
-                    "response_format": {"type": "json_object"}
-                }
-                r = requests.post(GROQ_API_URL, headers=headers, json=payload, timeout=GROQ_TIMEOUT)
-                if r.status_code == 200:
-                    data = r.json()
-                    text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-                    if text:
-                        data_json = json.loads(text)
-                        score = int(data_json.get("seo_score", 80))
-                        score = max(0, min(100, score))
-                        titulo_flow = str(data_json.get("titulo_flowcard", "")).strip()
-                        if not titulo_flow or len(titulo_flow.split()) < 2:
-                            titulo_flow = clean_and_format_title(raw_title)
-                        return {
-                            "seo_score": score,
-                            "seo_level": str(data_json.get("seo_level", "Alto")).strip(),
-                            "seo_reason": str(data_json.get("seo_reason", ""))[:140] or "Análisis SEO con IA",
-                            "keyword_objetivo": str(data_json.get("keyword_objetivo", ""))[:60],
-                            "trend_type": str(data_json.get("trend_type", ""))[:40],
-                            "titulo_flowcard": titulo_flow,
-                            "analysis_source": f"Groq ({m})",
-                        }
-            except Exception:
-                continue
-    except Exception as exc:
-        print(f"   [IA Groq] Fallback heurístico: {exc}")
-
     return None
 
 def shorten_to_25_chars(title: str) -> str:
-    """Asegura que un titular tenga máximo 25 caracteres sin cortar palabras torpemente."""
+    """Asegura de forma estricta e inviolable que el titular tenga MÁXIMO 25 caracteres totales."""
     if not title:
-        return "Sin titulo"
-    clean = re.sub(r'[^\w\s]', '', str(title).strip(), flags=re.UNICODE)
+        return "Sin título"
+    clean = re.sub(r'[^\w\sÁÉÍÓÚáéíóúñÑüÜ.,;:-]', '', str(title).strip()).strip()
     if len(clean) <= 25:
         return clean
     words = clean.split()
@@ -526,23 +488,23 @@ def shorten_to_25_chars(title: str) -> str:
         result.append(w)
         current_len = projected
     if not result:
-        return clean[:25]
+        return clean[:25].rstrip()
     return " ".join(result)
 
-
 def generate_temas_del_dia_headline(article: dict) -> str:
-    """Genera un titular para 'Temas del Día' de máximo 25 caracteres con IA Groq y sentido completo."""
+    """Genera un titular para 'Temas del Día' de MÁXIMO 25 caracteres totales con IA Groq."""
     api_key = get_groq_api_key()
     raw_title = article.get("titulo_raw", "")
     summary = article.get("resumen", "")
     
     if api_key:
         prompt = (
-            f"Eres un editor de portadas. Crea un titular periodístico de impacto para 'Temas del Día'.\n"
-            f"REGLA ESTRICTA:\n"
-            f"- El titular DEBE tener MÁXIMO 25 CARACTERES TOTALES (incluyendo letras y espacios).\n"
-            f"- Debe tener SENTIDO COMPLETO, palabras reales y gramática correcta.\n"
-            f"- Ejemplos excelentes: 'Petro anuncia reformas' (22), 'Dólar baja a mínimo' (19), 'Alerta roja por lluvias' (22).\n\n"
+            f"Eres un editor de portadas. Crea un titular de impacto para 'Temas del Día'.\n"
+            f"REGLA CRÍTICA INVIOLABLE:\n"
+            f"- El titular DEBE tener MÁXIMO 25 CARACTERES TOTALES (contando letras y espacios).\n"
+            f"- Si pasa de 25 caracteres será RECHAZADO.\n"
+            f"- Debe tener sentido completo y excelente redacción en español.\n"
+            f"- Ejemplos excelentes: 'Petro anuncia reformas' (22c), 'Dólar baja a mínimo' (19c), 'Alerta roja por lluvias' (22c).\n\n"
             f"Noticia:\n"
             f"Título original: {raw_title}\n"
             f"Resumen: {summary}\n\n"
@@ -559,7 +521,7 @@ def generate_temas_del_dia_headline(article: dict) -> str:
                             {"role": "system", "content": "Eres un editor de portadas breves. Creas titulares con límite estricto de 25 caracteres y sentido completo."},
                             {"role": "user", "content": prompt}
                         ],
-                        temperature=0.3,
+                        temperature=0.2,
                         max_completion_tokens=256,
                         response_format={"type": "json_object"}
                     )
@@ -567,9 +529,7 @@ def generate_temas_del_dia_headline(article: dict) -> str:
                     if content:
                         parsed = json.loads(content)
                         t25 = str(parsed.get("titular_25", "")).strip()
-                        if t25 and len(t25) <= 25:
-                            return t25
-                        elif t25:
+                        if t25:
                             return shorten_to_25_chars(t25)
                 except Exception:
                     continue

@@ -2,11 +2,11 @@
 """
 Flowcats v2.0 · Servidor Web para Render y Plataformas Cloud / Local
 Mesa de Redacción Automatizada:
-- Procesos separados e independientes: Flowcards SEO y Temas del Día (Top 8).
+- Procesos separados e independientes: Flowcards SEO (máx 3 palabras) y Temas del Día (Top 8 <= 25c).
 - Selección flexible de medios: El Tiempo y/o Portafolio.
-- IA Groq con modelo openai/gpt-oss-120b para titulares periodísticos con total sentido gramatical.
+- IA Groq con modelo openai/gpt-oss-120b para titulares periodísticos de alto impacto.
+- Módulo Anti-Sleep Guard integrado para Render Cloud.
 - Descarga directa e individual de libros Excel.
-- Radar Editorial interactivo y Ticker de última hora.
 """
 
 import os
@@ -15,6 +15,7 @@ import io
 import json
 import threading
 import time
+import urllib.request
 import urllib.parse
 from typing import List, Dict, Any, Optional
 from fastapi import FastAPI, BackgroundTasks, HTTPException
@@ -84,7 +85,6 @@ class LogRedirector:
                 if len(execution_state["logs"]) > 600:
                     execution_state["logs"] = execution_state["logs"][-600:]
                 
-                # Extraer porcentaje de progreso automático si está presente
                 import re
                 match = re.search(r'\(([0-9]+)%\)', msg_str)
                 if match:
@@ -96,7 +96,6 @@ class LogRedirector:
                     except Exception:
                         pass
                 
-                # Fases del proceso para el texto de acción
                 if "INICIANDO EXTRACCIÓN PARA: El Tiempo" in msg_str or "INICIANDO EXTRACCION PARA: El Tiempo" in msg_str:
                     execution_state["status"] = "Extrayendo noticias de El Tiempo..."
                 elif "INICIANDO EXTRACCIÓN PARA: Portafolio" in msg_str or "INICIANDO EXTRACCION PARA: Portafolio" in msg_str:
@@ -127,7 +126,6 @@ class RunRequest(BaseModel):
 
 
 def format_article_topic(art: dict, source_name: str) -> dict:
-    """Convierte un artículo al formato del radar editorial."""
     title = str(art.get("titulo_flowcard") or art.get("titulo_raw") or "Sin título").strip()
     category = str(art.get("categoria") or "GENERAL").strip().upper()
     score = int(art.get("seo_score") or 85)
@@ -165,7 +163,7 @@ def background_scraper_task(selected_sources: List[str], process_type: str, incl
         execution_state["status"] = "Inicializando motores de extracción..."
         execution_state["logs"] = [
             "=== INICIANDO PROCESO EN FLOWCATS WEB ===",
-            f"[*] Modo de proceso: {process_type.upper()} ({'Flowcards' if run_flowcards else ''}{' + ' if run_flowcards and run_temas else ''}{'Temas del Día' if run_temas else ''})",
+            f"[*] Modo de proceso: {process_type.upper()} ({'Flowcards (máx 3 palabras)' if run_flowcards else ''}{' + ' if run_flowcards and run_temas else ''}{'Temas del Día (<= 25 chars)' if run_temas else ''})",
             f"[*] Fuentes seleccionadas: {', '.join(selected_sources)}",
             f"[*] Motor IA: Groq (openai/gpt-oss-120b) · {'Conectado' if get_groq_api_key() else 'Modo heurístico'}",
             f"[*] Incluir URLs AMP: {'Sí' if include_amp else 'No'}"
@@ -307,12 +305,43 @@ def api_download_file(filename: str):
 @app.get("/health")
 @app.get("/api/health")
 def health_check():
-    return {"status": "ok", "app": "Flowcats Web", "version": "2.0.0"}
+    return {
+        "status": "ok",
+        "app": "Flowcats Web",
+        "version": "2.0.0",
+        "keep_alive": "active",
+        "timestamp": time.time()
+    }
 
 
 @app.get("/", response_class=HTMLResponse)
 def root_page():
     return HTML_CONTENT
+
+
+# Background self-pinging thread for Render
+def _start_internal_keep_alive():
+    external_url = os.environ.get("RENDER_EXTERNAL_URL") or os.environ.get("KEEP_ALIVE_URL")
+    if not external_url:
+        return
+    
+    def _worker():
+        time.sleep(60)  # Esperar a que el servidor termine de arrancar
+        target = f"{external_url.rstrip('/')}/health"
+        print(f"[Anti-Sleep Guard] Iniciado worker de auto-ping hacia {target} cada 10 min.")
+        while True:
+            try:
+                req = urllib.request.Request(target, headers={"User-Agent": "Flowcats-SelfPing/2.0"})
+                with urllib.request.urlopen(req, timeout=20) as resp:
+                    pass
+            except Exception:
+                pass
+            time.sleep(600)  # Cada 10 minutos
+            
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+
+_start_internal_keep_alive()
 
 
 HTML_CONTENT = r'''<!DOCTYPE html>
@@ -927,7 +956,7 @@ button{font-family:inherit}
             <span style="font-size:13.5px;font-weight:700;color:var(--paper);display:flex;align-items:center;gap:6px;">
               <i class="fa-solid fa-layer-group" style="color:var(--spring)"></i> Flowcards
             </span>
-            <span class="sc-sub">Titulares por categoría</span>
+            <span class="sc-sub">Máx 3 palabras clave</span>
           </span>
           <span class="sc-check"><i class="fa-solid fa-check"></i></span>
         </label>
@@ -938,7 +967,7 @@ button{font-family:inherit}
             <span style="font-size:13.5px;font-weight:700;color:var(--paper);display:flex;align-items:center;gap:6px;">
               <i class="fa-solid fa-star" style="color:var(--amber)"></i> Temas del Día
             </span>
-            <span class="sc-sub">Top 8 títulos &le; 25c</span>
+            <span class="sc-sub">Top 8 &le; 25 caracteres</span>
           </span>
           <span class="sc-check"><i class="fa-solid fa-check"></i></span>
         </label>
@@ -981,7 +1010,7 @@ button{font-family:inherit}
         <i class="fa-solid fa-bolt"></i><span>Ejecutar automatización</span>
       </button>
       <p class="run-hint" id="runHint"><i class="fa-solid fa-triangle-exclamation"></i> Selecciona al menos un proceso (Flowcards/Temas) y un medio antes de ejecutar.</p>
-      <p class="etiqueta">— IA: openai/gpt-oss-120b &middot; Titulares periodísticos de alto impacto con sentido completo y gramática impecable.</p>
+      <p class="etiqueta">— IA: openai/gpt-oss-120b &middot; Flowcards (máx 3 palabras clave) | Temas del Día (máx 25 caracteres).</p>
     </section>
 
     <div class="stack">
