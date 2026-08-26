@@ -2,11 +2,11 @@
 """
 Flowcats v2.0 · Servidor Web para Render y Plataformas Cloud / Local
 Mesa de Redacción Automatizada:
-- Procesos independientes y separados para El Tiempo y Portafolio.
-- El Tiempo: Extracción de 10-22 categorías + Generación exclusiva de Temas del Día (Top 8 <=25 caracteres con Groq AI).
-- Portafolio: Extracción por 5 grupos económicos/empresariales independientes con deduplicación propia.
-- Descarga directa de libros Excel generados según la selección.
-- Radar Editorial independiente por pestañas (Temas del Día, El Tiempo, Portafolio).
+- Procesos separados e independientes: Flowcards SEO y Temas del Día (Top 8).
+- Selección flexible de medios: El Tiempo y/o Portafolio.
+- IA Groq con modelo openai/gpt-oss-120b para titulares periodísticos con total sentido gramatical.
+- Descarga directa e individual de libros Excel.
+- Radar Editorial interactivo y Ticker de última hora.
 """
 
 import os
@@ -96,13 +96,13 @@ class LogRedirector:
                     except Exception:
                         pass
                 
-                # Fases del proceso
-                if "INICIANDO EXTRACCION PARA: El Tiempo" in msg_str:
-                    execution_state["status"] = "Extrayendo categorías de El Tiempo..."
-                elif "INICIANDO EXTRACCION PARA: Portafolio" in msg_str:
+                # Fases del proceso para el texto de acción
+                if "INICIANDO EXTRACCIÓN PARA: El Tiempo" in msg_str or "INICIANDO EXTRACCION PARA: El Tiempo" in msg_str:
+                    execution_state["status"] = "Extrayendo noticias de El Tiempo..."
+                elif "INICIANDO EXTRACCIÓN PARA: Portafolio" in msg_str or "INICIANDO EXTRACCION PARA: Portafolio" in msg_str:
                     execution_state["status"] = "Extrayendo grupos económicos de Portafolio..."
                 elif "PROCESANDO TEMAS DEL DÍA" in msg_str:
-                    execution_state["status"] = "Generando Temas del Día (Top 8 El Tiempo con Groq AI)..."
+                    execution_state["status"] = "Generando Temas del Día (Top 8 <= 25c con Groq openai/gpt-oss-120b)..."
                 elif "Archivo El Tiempo.xlsx generado" in msg_str:
                     execution_state["status"] = "Empaquetando El Tiempo.xlsx..."
                 elif "Archivo Portafolio.xlsx generado" in msg_str:
@@ -122,14 +122,15 @@ class LogRedirector:
 
 class RunRequest(BaseModel):
     selected_sources: List[str] = ["El Tiempo", "Portafolio"]
+    process_type: str = "both"  # "flowcards", "temas_del_dia", "both"
     include_amp: bool = True
 
 
 def format_article_topic(art: dict, source_name: str) -> dict:
-    """Convierte un artículo del scraper al formato del radar editorial."""
-    title = str(art.get("titulo_raw") or art.get("titulo_flowcard") or "Sin título").strip()
+    """Convierte un artículo al formato del radar editorial."""
+    title = str(art.get("titulo_flowcard") or art.get("titulo_raw") or "Sin título").strip()
     category = str(art.get("categoria") or "GENERAL").strip().upper()
-    score = int(art.get("seo_score") or 80)
+    score = int(art.get("seo_score") or 85)
     score = max(50, min(99, score))
     
     keywords = art.get("keywords") or []
@@ -148,11 +149,13 @@ def format_article_topic(art: dict, source_name: str) -> dict:
     }
 
 
-def background_scraper_task(selected_sources: List[str], include_amp: bool):
+def background_scraper_task(selected_sources: List[str], process_type: str, include_amp: bool):
     global execution_state
     original_stdout = sys.stdout
     redirector = LogRedirector(original_stdout)
     
+    run_flowcards = process_type in ("flowcards", "both")
+    run_temas = process_type in ("temas_del_dia", "both")
     run_el_tiempo = "El Tiempo" in selected_sources
     run_portafolio = "Portafolio" in selected_sources
 
@@ -162,18 +165,17 @@ def background_scraper_task(selected_sources: List[str], include_amp: bool):
         execution_state["status"] = "Inicializando motores de extracción..."
         execution_state["logs"] = [
             "=== INICIANDO PROCESO EN FLOWCATS WEB ===",
+            f"[*] Modo de proceso: {process_type.upper()} ({'Flowcards' if run_flowcards else ''}{' + ' if run_flowcards and run_temas else ''}{'Temas del Día' if run_temas else ''})",
             f"[*] Fuentes seleccionadas: {', '.join(selected_sources)}",
-            f"[*] Proceso El Tiempo + Temas del Día: {'Activo' if run_el_tiempo else 'Omitido'}",
-            f"[*] Proceso Portafolio (5 grupos): {'Activo' if run_portafolio else 'Omitido'}",
-            f"[*] Incluir URLs AMP: {'Sí' if include_amp else 'No'}",
-            f"[*] Motor Groq AI: {'Conectado' if get_groq_api_key() else 'Modo heurístico'}"
+            f"[*] Motor IA: Groq (openai/gpt-oss-120b) · {'Conectado' if get_groq_api_key() else 'Modo heurístico'}",
+            f"[*] Incluir URLs AMP: {'Sí' if include_amp else 'No'}"
         ]
         execution_state["files_generated"] = []
         execution_state["topics"] = {"top": [], "El Tiempo": [], "Portafolio": []}
 
     sys.stdout = redirector
     try:
-        results = run_scraper_selected(selected_sources, include_amp=include_amp)
+        results = run_scraper_selected(selected_sources, process_type=process_type, include_amp=include_amp)
         
         topics_et = []
         topics_pf = []
@@ -184,30 +186,27 @@ def background_scraper_task(selected_sources: List[str], include_amp: bool):
             raw_pf = results.get("Portafolio", [])
             raw_top = results.get("top", [])
             
-            # El Tiempo: categorías individuales
             if run_el_tiempo and raw_et:
                 topics_et = [format_article_topic(a, "El Tiempo") for a in raw_et]
-                # Temas del Día: Top 8 exclusivo de El Tiempo
-                if raw_top:
+                if run_temas and raw_top:
                     topics_top = [format_article_topic(a, "El Tiempo") for a in raw_top]
             
-            # Portafolio: grupos económicos independientes
             if run_portafolio and raw_pf:
                 topics_pf = [format_article_topic(a, "Portafolio") for a in raw_pf]
 
-        # Detectar archivos generados correspondientes a la selección
+        # Detectar archivos generados según el tipo de proceso y medio
         files = []
-        if run_el_tiempo:
-            if os.path.exists(os.path.join(BASE_DIR, "El Tiempo.xlsx")):
+        if run_flowcards:
+            if run_el_tiempo and os.path.exists(os.path.join(BASE_DIR, "El Tiempo.xlsx")):
                 files.append("El Tiempo.xlsx")
+            if run_portafolio and os.path.exists(os.path.join(BASE_DIR, "Portafolio.xlsx")):
+                files.append("Portafolio.xlsx")
+
+        if run_temas and run_el_tiempo:
             for temas_name in ["TEMAS DEL DÍA.xlsx", "TEMAS DEL DIA.xlsx"]:
                 if os.path.exists(os.path.join(BASE_DIR, temas_name)):
                     files.append(temas_name)
                     break
-
-        if run_portafolio:
-            if os.path.exists(os.path.join(BASE_DIR, "Portafolio.xlsx")):
-                files.append("Portafolio.xlsx")
 
         with state_lock:
             execution_state["progress"] = 100
@@ -236,15 +235,19 @@ def api_run_scraper(req: RunRequest, background_tasks: BackgroundTasks):
     if not req.selected_sources:
         raise HTTPException(status_code=400, detail="Debes seleccionar al menos una fuente de noticias (El Tiempo o Portafolio).")
     
+    if req.process_type not in ("flowcards", "temas_del_dia", "both"):
+        req.process_type = "both"
+
     with state_lock:
         if execution_state["running"]:
             raise HTTPException(status_code=400, detail="Ya hay un proceso de extracción en ejecución.")
         execution_state["running"] = True
 
-    background_tasks.add_task(background_scraper_task, req.selected_sources, req.include_amp)
+    background_tasks.add_task(background_scraper_task, req.selected_sources, req.process_type, req.include_amp)
     return {
         "message": "Proceso iniciado en segundo plano",
         "sources": req.selected_sources,
+        "process_type": req.process_type,
         "include_amp": req.include_amp
     }
 
@@ -481,6 +484,31 @@ button{font-family:inherit}
 }
 .panel.in{opacity:1;transform:none}
 .panel:hover{border-color:var(--border-hi)}
+
+
+.modes-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
+.mode-card{
+  display:flex;align-items:center;justify-content:space-between;gap:8px;
+  padding:12px 13px;border-radius:8px;cursor:pointer;user-select:none;
+  background:var(--panel-deep);border:1px solid var(--border);border-left:3px solid transparent;
+  transition:transform .25s,border-color .25s,background .25s,box-shadow .25s;
+  position:relative;
+}
+.mode-card:hover{transform:translateY(-2px);border-color:var(--border-hi);border-left-color:rgba(0,250,154,.4)}
+.mode-card input{position:absolute;opacity:0;pointer-events:none}
+.mode-card.selected{
+  border-left-color:var(--spring);
+  background:linear-gradient(90deg,rgba(16,185,129,.1),rgba(16,185,129,.02)),var(--panel-deep);
+}
+.mode-card.locked{opacity:.5;pointer-events:none}
+.mode-card.selected .sc-check{
+  background:var(--spring);border-color:transparent;color:#04120C;
+  box-shadow:0 0 13px rgba(0,250,154,.5);transform:scale(1.06);
+}
+.sec-subhead{
+  font-family:var(--mono);font-size:10px;letter-spacing:1.8px;
+  color:var(--faint);text-transform:uppercase;margin-bottom:8px;
+}
 
 /* Etiqueta numerada de sección */
 .panel-tag{
@@ -890,9 +918,37 @@ button{font-family:inherit}
     <section class="panel" aria-labelledby="cfgTag">
       <div class="panel-tag" id="cfgTag"><span class="num">01</span> Configuración de extracción</div>
 
+      <!-- 1.1 Tipo de Proceso -->
+      <div class="sec-subhead"><i class="fa-solid fa-sliders"></i> Tipo de Proceso</div>
+      <div class="modes-grid">
+        <label class="mode-card selected" id="modeCardFlowcards">
+          <input type="checkbox" id="checkFlowcards" value="flowcards" checked>
+          <span class="sc-box">
+            <span style="font-size:13.5px;font-weight:700;color:var(--paper);display:flex;align-items:center;gap:6px;">
+              <i class="fa-solid fa-layer-group" style="color:var(--spring)"></i> Flowcards
+            </span>
+            <span class="sc-sub">Titulares por categoría</span>
+          </span>
+          <span class="sc-check"><i class="fa-solid fa-check"></i></span>
+        </label>
+
+        <label class="mode-card selected" id="modeCardTemas">
+          <input type="checkbox" id="checkTemas" value="temas_del_dia" checked>
+          <span class="sc-box">
+            <span style="font-size:13.5px;font-weight:700;color:var(--paper);display:flex;align-items:center;gap:6px;">
+              <i class="fa-solid fa-star" style="color:var(--amber)"></i> Temas del Día
+            </span>
+            <span class="sc-sub">Top 8 títulos &le; 25c</span>
+          </span>
+          <span class="sc-check"><i class="fa-solid fa-check"></i></span>
+        </label>
+      </div>
+
+      <!-- 1.2 Medio Informativo -->
+      <div class="sec-subhead"><i class="fa-solid fa-newspaper"></i> Medio Informativo</div>
       <div class="sources-grid">
-        <label class="source-card selected">
-          <input type="checkbox" value="El Tiempo" checked>
+        <label class="source-card selected" id="sourceCardElTiempo">
+          <input type="checkbox" value="El Tiempo" id="checkElTiempo" checked>
           <span class="sc-box">
             <span class="sc-mast et">EL TIEMPO</span>
             <span class="sc-sub">22 categorías · cubrimiento nacional</span>
@@ -900,8 +956,8 @@ button{font-family:inherit}
           <span class="sc-check"><i class="fa-solid fa-check"></i></span>
         </label>
 
-        <label class="source-card">
-          <input type="checkbox" value="Portafolio">
+        <label class="source-card" id="sourceCardPortafolio">
+          <input type="checkbox" value="Portafolio" id="checkPortafolio">
           <span class="sc-box">
             <span class="sc-mast pf">PORTAFOLIO</span>
             <span class="sc-sub">5 grupos económicos y empresariales</span>
@@ -924,8 +980,8 @@ button{font-family:inherit}
       <button class="btn-run" id="runBtn">
         <i class="fa-solid fa-bolt"></i><span>Ejecutar automatización</span>
       </button>
-      <p class="run-hint" id="runHint"><i class="fa-solid fa-triangle-exclamation"></i> Marca al menos una fuente antes de ejecutar.</p>
-      <p class="etiqueta">— Consejo de la mesa: ejecuta antes de las 9 a.&nbsp;m. y el gato pilla la agenda del día completa.</p>
+      <p class="run-hint" id="runHint"><i class="fa-solid fa-triangle-exclamation"></i> Selecciona al menos un proceso (Flowcards/Temas) y un medio antes de ejecutar.</p>
+      <p class="etiqueta">— IA: openai/gpt-oss-120b &middot; Titulares periodísticos de alto impacto con sentido completo y gramática impecable.</p>
     </section>
 
     <div class="stack">
@@ -997,7 +1053,7 @@ button{font-family:inherit}
       </div>
 
       <div class="topics-tabs" role="tablist">
-        <button class="ttab active" data-tab="top" role="tab"><i class="star">★</i> Temas del Día (Top 8) <span class="tcount">0</span></button>
+        <button class="ttab active" data-tab="top" role="tab"><i class="star">★</i> Top 8 del día <span class="tcount">0</span></button>
         <button class="ttab" data-tab="El Tiempo" role="tab">El Tiempo <span class="tcount">0</span></button>
         <button class="ttab" data-tab="Portafolio" role="tab">Portafolio <span class="tcount">0</span></button>
       </div>
@@ -1058,6 +1114,9 @@ function cacheEls(){
   els.mastDate=$('#mastDate');    els.mastEdition=$('#mastEdition');
   els.stepperSteps=$$('.stepper .step');
   els.sourceCards=$$('.source-card');
+  els.modeCards=$$('.mode-card');
+  els.checkFlowcards=$('#checkFlowcards');
+  els.checkTemas=$('#checkTemas');
 }
 
 /* ------------------ Estado ------------------ */
@@ -1662,14 +1721,31 @@ async function downloadAll(){
 const getSelectedSources = () =>
   els.sourceCards.map(c => c.querySelector('input')).filter(i => i.checked).map(i => i.value);
 
+const getSelectedModes = () =>
+  els.modeCards.map(c => c.querySelector('input')).filter(i => i.checked).map(i => i.value);
+
+function getProcessType(){
+  const modes = getSelectedModes();
+  if (modes.includes('flowcards') && modes.includes('temas_del_dia')) return 'both';
+  if (modes.includes('flowcards')) return 'flowcards';
+  if (modes.includes('temas_del_dia')) return 'temas_del_dia';
+  return 'both';
+}
+
 function syncRunControls(){
-  const sel = getSelectedSources();
-  els.runBtn.disabled = State.running || sel.length === 0;
-  els.runHint.classList.toggle('show', !State.running && sel.length === 0);
+  const sources = getSelectedSources();
+  const modes = getSelectedModes();
+  const isValid = sources.length > 0 && modes.length > 0;
+  els.runBtn.disabled = State.running || !isValid;
+  els.runHint.classList.toggle('show', !State.running && !isValid);
 }
 
 function setRunningLock(on){
   els.sourceCards.forEach(c => {
+    c.querySelector('input').disabled = on;
+    c.classList.toggle('locked', on);
+  });
+  els.modeCards.forEach(c => {
     c.querySelector('input').disabled = on;
     c.classList.toggle('locked', on);
   });
@@ -1775,7 +1851,7 @@ async function runFlow(){
   if (State.running) return;
   const sources = getSelectedSources();
   if (!sources.length){
-    Toast.warn('Marca al menos una fuente antes de ejecutar.');
+    Toast.warn('Selecciona al menos un proceso (Flowcards/Temas) y un medio antes de ejecutar.');
     return;
   }
 
@@ -1785,6 +1861,7 @@ async function runFlow(){
   try {
     const res = await API.run({
       selected_sources: sources,
+      process_type: getProcessType(),
       include_amp: els.amp.checked,
     });
 
@@ -1818,6 +1895,14 @@ function bindEvents(){
   els.downloadAll.addEventListener('click', downloadAll);
 
   els.sourceCards.forEach(card => {
+    const input = card.querySelector('input');
+    input.addEventListener('change', () => {
+      card.classList.toggle('selected', input.checked);
+      syncRunControls();
+    });
+  });
+
+  els.modeCards.forEach(card => {
     const input = card.querySelector('input');
     input.addEventListener('change', () => {
       card.classList.toggle('selected', input.checked);

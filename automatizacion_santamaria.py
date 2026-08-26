@@ -212,15 +212,15 @@ STOP_WORDS = {
 # UTILIDADES Y PROCESAMIENTO
 # ─────────────────────────────────────────────
 
-def clean_and_format_title(raw_title: str, max_words: int = 3, max_chars: int = 70) -> str:
+def clean_and_format_title(raw_title: str, max_words: int = 10, max_chars: int = 90) -> str:
     """
-    Limpia y mejora el titular periodístico para Flowcards:
-    - Selecciona exactamente 3 palabras clave completas y de mayor valor gramatical.
-    - Elimina conectores y palabras vacías ('la, los, el, sus, del, de, en, para, con, por', etc.).
-    - Elimina TODO tipo de signos de puntuación, símbolos o comillas.
+    Limpia y da formato profesional al titular periodístico para Flowcards:
+    - Conserva total sentido gramatical, coherencia y sintaxis natural.
+    - Elimina prefijos de ruido ('EXCLUSIVO:', 'EN VIVO:', 'URGENTE:', etc.).
+    - Elimina comillas innecesarias y autorías al final.
     """
     if not raw_title or not str(raw_title).strip():
-        return "Sin titulo"
+        return "Sin título"
     
     text = str(raw_title).strip()
     
@@ -228,68 +228,19 @@ def clean_and_format_title(raw_title: str, max_words: int = 3, max_chars: int = 
     for pattern in PREFIX_NOISE:
         text = re.sub(pattern, "", text, flags=re.IGNORECASE).strip()
         
-    # 2. Manejo de citas y autorías al final (ej: ': James Rockall' o ', según Acoplásticos')
+    # 2. Quitar citas/autorías al final (ej: ', según expertos' o ': James Rockall')
     text = re.sub(r':\s*[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){1,3}\s*$', '', text)
     text = re.sub(r',\s*según\s+.*$', '', text, flags=re.IGNORECASE)
     
-    # 3. Analizar división natural por dos puntos ':' o signos de interrogación '?'
-    if ":" in text:
-        parts = text.split(":", 1)
-        first_part_words = parts[0].strip().split()
-        if len(first_part_words) >= 3 or len(parts[0].strip()) >= 15:
-            text = parts[0].strip()
-        elif len(parts[1].strip().split()) >= 3:
-            text = parts[1].strip()
-
-    # Si hay pregunta '¿...?'
-    q_match = re.search(r'¿([^?]+)\?', text)
-    if q_match:
-        q_text = q_match.group(1).strip()
-        if len(q_text.split()) >= 3:
-            text = q_text
-
-    # 4. Normalizar subíndices/superíndices comunes y monedas
-    sub_map = {'₀': '0', '₁': '1', '₂': '2', '₃': '3', '₄': '4', '₅': '5', '₆': '6', '₇': '7', '₈': '8', '₉': '9'}
-    for k, v in sub_map.items():
-        text = text.replace(k, v)
-        
-    # Unir números con puntos de miles
-    text = re.sub(r'(\d+)\.(\d+)', r'\1\2', text)
-    text = re.sub(r'US\$\s*', 'US ', text)
-    text = re.sub(r'\$\s*', '', text)
-
-    # 5. Eliminar absolutamente TODOS los signos, puntuación y caracteres especiales
-    text = re.sub(r'[^\w\s]', ' ', text, flags=re.UNICODE)
+    # 3. Limpiar signos extraños al inicio o fin
+    text = text.strip('"\'“”«» ').rstrip('.,;:-')
     
-    # 6. Extraer palabras completas y filtrar stop words / conectores
-    raw_words = text.split()
-    if not raw_words:
-        return "Sin titulo"
+    # 4. Si el titular es excesivamente largo, cortar en un límite natural de palabras
+    words = text.split()
+    if len(words) > max_words:
+        text = " ".join(words[:max_words]).rstrip('.,;:-')
         
-    meaningful_words = []
-    all_clean_words = []
-    
-    for w in raw_words:
-        w_clean = re.sub(r'[^\w]', '', w, flags=re.UNICODE)
-        if not w_clean:
-            continue
-        all_clean_words.append(w_clean)
-        if w_clean.lower() not in STOP_WORDS and not w_clean.isdigit():
-            meaningful_words.append(w_clean)
-            
-    if len(meaningful_words) >= max_words:
-        selected_words = meaningful_words[:max_words]
-    elif len(meaningful_words) > 0:
-        selected_words = meaningful_words[:max_words]
-    else:
-        selected_words = all_clean_words[:max_words]
-        
-    if not selected_words:
-        return "Sin titulo"
-        
-    # Formatear la primera letra en mayúscula
-    final_words = [w[0].upper() + w[1:] if len(w) > 1 else w.upper() for w in selected_words]
-    return " ".join(final_words)
+    return text if text else str(raw_title).strip()
 
 def shorten_title_smart(title: str, max_words: int = 10) -> str:
     """Función de compatibilidad que llama a clean_and_format_title."""
@@ -443,89 +394,120 @@ def analyze_with_groq(article: dict) -> dict | None:
     if not api_key:
         return None
 
+    raw_title = article.get("titulo_raw", "")
+    category = article.get("categoria", "")
+    summary = article.get("resumen", "")
+
     prompt = (
-        "Analiza esta noticia de El Tiempo y responde ÚNICAMENTE con un JSON válido estructurado.\n"
-        "Evalúa el potencial de tendencia y SEO periodístico.\n"
-        "Campos requeridos en el JSON:\n"
-        "- seo_score: número entero entre 0 y 100.\n"
-        "- seo_level: uno de 'Muy alto', 'Alto', 'Medio', 'Bajo'.\n"
-        "- seo_reason: motivo breve en máximo 140 caracteres.\n"
-        "- keyword_objetivo: término clave principal en máximo 60 caracteres.\n"
-        "- trend_type: tipo de tendencia en máximo 40 caracteres.\n"
-        "- titulo_flowcard: Titular formado por EXACTAMENTE 3 PALABRAS CLAVE COMPLETAS Y DE ALTO IMPACTO. "
-        "NO incluyas conectores ni artículos como 'el', 'la', 'los', 'las', 'de', 'del', 'en', 'para', 'con', 'por', 'sus'. "
-        "Solo 3 palabras completas.\n\n"
-        "Noticia a analizar:\n"
-        f"Categoría: {article.get('categoria', '')}\n"
-        f"Fecha: {article.get('fecha', '')} {article.get('hora', '')}\n"
-        f"Título: {article.get('titulo_raw', '')}\n"
-        f"Resumen: {article.get('resumen', '')}\n"
+        f"Eres un editor periodístico senior de El Tiempo / Portafolio.\n"
+        f"Tu tarea es generar un titular para Flowcard que sea DIRECTO, IMPACTANTE y con TOTAL SENTIDO GRAMATICAL Y PERIODÍSTICO.\n\n"
+        f"DATOS DE LA NOTICIA:\n"
+        f"- Categoría: {category}\n"
+        f"- Titular original: {raw_title}\n"
+        f"- Resumen: {summary}\n\n"
+        f"REGLAS PARA EL TITULAR FLOWCARD:\n"
+        f"1. DEBE tener sentido completo, redacción natural y sintaxis impecable en español.\n"
+        f"2. NO recortes palabras ni dejes frases incoherentes o palabras sueltas sin conexión.\n"
+        f"3. Longitud ideal: 4 a 8 palabras claras que comuniquen con fuerza lo más importante de la noticia.\n"
+        f"4. Evalúa el potencial SEO y de tendencia de 0 a 100.\n\n"
+        f'Responde ÚNICAMENTE en formato JSON estructurado:\n'
+        f'{{\n'
+        f'  "titulo_flowcard": "Titular con sentido completo y alto impacto",\n'
+        f'  "seo_score": 88,\n'
+        f'  "seo_level": "Muy alto",\n'
+        f'  "seo_reason": "Explicación breve del interés periodístico",\n'
+        f'  "keyword_objetivo": "término clave principal",\n'
+        f'  "trend_type": "Nacional / Economía / Tendencia"\n'
+        f'}}'
     )
 
-    payload = {
-        "model": GROQ_MODEL,
-        "messages": [
-            {
-                "role": "system",
-                "content": "Eres un editor periodístico de SEO de El Tiempo. Respondes exclusivamente en formato JSON estructurado.",
-            },
-            {
-                "role": "user",
-                "content": prompt,
-            }
-        ],
-        "temperature": 0.2,
-        "response_format": {"type": "json_object"}
-    }
-
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-
+    # 1. Intentar con Groq SDK oficial
     try:
-        response = requests.post(
-            GROQ_API_URL,
-            headers=headers,
-            json=payload,
-            timeout=GROQ_TIMEOUT,
-        )
-        response.raise_for_status()
-        data = response.json()
-        text = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
-        if not text:
-            return None
+        from groq import Groq
+        client = Groq(api_key=api_key)
+        
+        models_to_try = [
+            "openai/gpt-oss-120b",
+            "llama-3.3-70b-versatile",
+            "llama-3.1-70b-versatile",
+            "llama3-70b-8192"
+        ]
+        
+        for m in models_to_try:
+            try:
+                chat_completion = client.chat.completions.create(
+                    model=m,
+                    messages=[
+                        {"role": "system", "content": "Eres un editor periodístico SEO experto. Respondes únicamente en formato JSON válido."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.4,
+                    max_completion_tokens=1024,
+                    response_format={"type": "json_object"}
+                )
+                content_resp = chat_completion.choices[0].message.content
+                if content_resp:
+                    data_json = json.loads(content_resp)
+                    score = int(data_json.get("seo_score", 80))
+                    score = max(0, min(100, score))
+                    titulo_flow = str(data_json.get("titulo_flowcard", "")).strip()
+                    if not titulo_flow or len(titulo_flow.split()) < 2:
+                        titulo_flow = clean_and_format_title(raw_title)
+                    
+                    return {
+                        "seo_score": score,
+                        "seo_level": str(data_json.get("seo_level", "Alto")).strip(),
+                        "seo_reason": str(data_json.get("seo_reason", ""))[:140] or "Análisis SEO con IA",
+                        "keyword_objetivo": str(data_json.get("keyword_objetivo", ""))[:60],
+                        "trend_type": str(data_json.get("trend_type", ""))[:40],
+                        "titulo_flowcard": titulo_flow,
+                        "analysis_source": f"Groq ({m})",
+                    }
+            except Exception:
+                continue
+    except Exception:
+        pass
 
-        parsed = json.loads(text)
-        score = int(parsed.get("seo_score", 0))
-        score = max(0, min(100, score))
-        level = str(parsed.get("seo_level", "Medio")).strip() or "Medio"
-        if level not in {"Muy alto", "Alto", "Medio", "Bajo"}:
-            if score >= 78:
-                level = "Muy alto"
-            elif score >= 63:
-                level = "Alto"
-            elif score >= 48:
-                level = "Medio"
-            else:
-                level = "Bajo"
-
-        raw_groq_title = str(parsed.get("titulo_flowcard", "")).strip()
-        cleaned_groq_title = clean_and_format_title(raw_groq_title, max_words=3) if raw_groq_title else ""
-
-        return {
-            "seo_score": score,
-            "seo_level": level,
-            "seo_reason": str(parsed.get("seo_reason", "")).strip()[:140] or "Análisis IA Groq sin motivo breve",
-            "keyword_objetivo": str(parsed.get("keyword_objetivo", "")).strip()[:60],
-            "trend_type": str(parsed.get("trend_type", "")).strip()[:40],
-            "titulo_flowcard": cleaned_groq_title,
-            "analysis_source": "Groq Llama-3.3",
-        }
+    # 2. Fallback vía requests
+    try:
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        for m in ["openai/gpt-oss-120b", "llama-3.3-70b-versatile", "llama3-70b-8192"]:
+            try:
+                payload = {
+                    "model": m,
+                    "messages": [
+                        {"role": "system", "content": "Eres un editor periodístico SEO experto. Respondes exclusivamente en formato JSON estructurado."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": 0.4,
+                    "response_format": {"type": "json_object"}
+                }
+                r = requests.post(GROQ_API_URL, headers=headers, json=payload, timeout=GROQ_TIMEOUT)
+                if r.status_code == 200:
+                    data = r.json()
+                    text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                    if text:
+                        data_json = json.loads(text)
+                        score = int(data_json.get("seo_score", 80))
+                        score = max(0, min(100, score))
+                        titulo_flow = str(data_json.get("titulo_flowcard", "")).strip()
+                        if not titulo_flow or len(titulo_flow.split()) < 2:
+                            titulo_flow = clean_and_format_title(raw_title)
+                        return {
+                            "seo_score": score,
+                            "seo_level": str(data_json.get("seo_level", "Alto")).strip(),
+                            "seo_reason": str(data_json.get("seo_reason", ""))[:140] or "Análisis SEO con IA",
+                            "keyword_objetivo": str(data_json.get("keyword_objetivo", ""))[:60],
+                            "trend_type": str(data_json.get("trend_type", ""))[:40],
+                            "titulo_flowcard": titulo_flow,
+                            "analysis_source": f"Groq ({m})",
+                        }
+            except Exception:
+                continue
     except Exception as exc:
-        print(f"   [IA Groq] Fallback heurístico por error: {exc}")
-        return None
+        print(f"   [IA Groq] Fallback heurístico: {exc}")
 
+    return None
 
 def shorten_to_25_chars(title: str) -> str:
     """Asegura que un titular tenga máximo 25 caracteres sin cortar palabras torpemente."""
@@ -549,47 +531,52 @@ def shorten_to_25_chars(title: str) -> str:
 
 
 def generate_temas_del_dia_headline(article: dict) -> str:
-    """Genera un titular para 'Temas del Día' de máximo 25 caracteres usando Groq API."""
+    """Genera un titular para 'Temas del Día' de máximo 25 caracteres con IA Groq y sentido completo."""
     api_key = get_groq_api_key()
     raw_title = article.get("titulo_raw", "")
+    summary = article.get("resumen", "")
     
     if api_key:
         prompt = (
-            "Genera un titular ultra sintético e impactante para la siguiente noticia de El Tiempo.\n"
-            "REGLA CRÍTICA INVIOLABLE: El titular debe tener MÁXIMO 25 CARACTERES TOTALES (incluyendo espacios).\n"
-            "NO puede superar bajo ninguna circunstancia los 25 caracteres. Usa palabras completas y legibles.\n"
-            "Responde ÚNICAMENTE en formato JSON con la clave 'titular_25'. Ejemplo: {\"titular_25\": \"Petro anuncia reformas\"}\n\n"
+            f"Eres un editor de portadas. Crea un titular periodístico de impacto para 'Temas del Día'.\n"
+            f"REGLA ESTRICTA:\n"
+            f"- El titular DEBE tener MÁXIMO 25 CARACTERES TOTALES (incluyendo letras y espacios).\n"
+            f"- Debe tener SENTIDO COMPLETO, palabras reales y gramática correcta.\n"
+            f"- Ejemplos excelentes: 'Petro anuncia reformas' (22), 'Dólar baja a mínimo' (19), 'Alerta roja por lluvias' (22).\n\n"
+            f"Noticia:\n"
             f"Título original: {raw_title}\n"
-            f"Resumen: {article.get('resumen', '')}\n"
+            f"Resumen: {summary}\n\n"
+            f'Responde ÚNICAMENTE en formato JSON: {{"titular_25": "Titular <= 25 chars"}}'
         )
-        payload = {
-            "model": GROQ_MODEL,
-            "messages": [
-                {"role": "system", "content": "Eres un redactor periodístico de portadas concisas. Tu especialidad es crear titulares con límite estricto de 25 caracteres."},
-                {"role": "user", "content": prompt}
-            ],
-            "temperature": 0.1,
-            "response_format": {"type": "json_object"}
-        }
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
-        }
         try:
-            resp = requests.post(GROQ_API_URL, headers=headers, json=payload, timeout=15)
-            resp.raise_for_status()
-            data = resp.json()
-            text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-            if text:
-                parsed = json.loads(text)
-                t25 = str(parsed.get("titular_25", "")).strip()
-                if t25:
-                    return shorten_to_25_chars(t25)
-        except Exception as exc:
+            from groq import Groq
+            client = Groq(api_key=api_key)
+            for m in ["openai/gpt-oss-120b", "llama-3.3-70b-versatile", "llama3-70b-8192"]:
+                try:
+                    resp = client.chat.completions.create(
+                        model=m,
+                        messages=[
+                            {"role": "system", "content": "Eres un editor de portadas breves. Creas titulares con límite estricto de 25 caracteres y sentido completo."},
+                            {"role": "user", "content": prompt}
+                        ],
+                        temperature=0.3,
+                        max_completion_tokens=256,
+                        response_format={"type": "json_object"}
+                    )
+                    content = resp.choices[0].message.content
+                    if content:
+                        parsed = json.loads(content)
+                        t25 = str(parsed.get("titular_25", "")).strip()
+                        if t25 and len(t25) <= 25:
+                            return t25
+                        elif t25:
+                            return shorten_to_25_chars(t25)
+                except Exception:
+                    continue
+        except Exception:
             pass
 
     return shorten_to_25_chars(raw_title)
-
 
 def export_temas_del_dia(articles: list, work_dir: str) -> str | None:
     """
@@ -1189,9 +1176,12 @@ def run_scraper():
     except Exception as e:
         print(f"\n[!] No se pudo guardar el historial: {e}")
 
-def run_scraper_selected(selected_sources=None, include_amp: bool = True):
+def run_scraper_selected(selected_sources=None, process_type: str = "both", include_amp: bool = True):
     if not selected_sources:
         selected_sources = ["El Tiempo", "Portafolio"]
+
+    run_flowcards = process_type in ("flowcards", "both")
+    run_temas = process_type in ("temas_del_dia", "both")
 
     run_el_tiempo = "El Tiempo" in selected_sources
     run_portafolio = "Portafolio" in selected_sources
@@ -1200,8 +1190,9 @@ def run_scraper_selected(selected_sources=None, include_amp: bool = True):
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
     print("=" * 60)
-    print("  AUTOMATIZACION SANTAMARIA - Generador de Flowcards")
+    print("  FLOWCATS v2.0 - Generador de Noticias & Radar Editorial")
     print(f"  Fecha: {datetime.now().strftime('%Y-%m-%d %I:%M %p')}")
+    print(f"  Modo de Proceso: {process_type.upper()} | Fuentes: {', '.join(selected_sources)}")
     print("=" * 60)
 
     total_tasks = 0
@@ -1210,8 +1201,8 @@ def run_scraper_selected(selected_sources=None, include_amp: bool = True):
     if run_portafolio:
         total_tasks += len(PORTAFOLIO_CONFIG.get("feeds_grouped", {}))
     if total_tasks == 0:
-        print(f"\n[!] No se selecciono ningun medio para procesar.")
-        return
+        print(f"\n[!] No se seleccionó ningún medio para procesar.")
+        return {"El Tiempo": [], "Portafolio": [], "top": []}
 
     current_task = 0
     work_dir = os.path.dirname(os.path.abspath(__file__))
@@ -1227,20 +1218,19 @@ def run_scraper_selected(selected_sources=None, include_amp: bool = True):
         except Exception:
             pass
 
+    articles = []
     if run_el_tiempo:
         for site_name, config in SITES.items():
-            print(f"\n\n--- INICIANDO EXTRACCION PARA: {site_name} ---")
+            print(f"\n\n--- INICIANDO EXTRACCIÓN PARA: {site_name} ---")
             out_path = os.path.join(work_dir, config["output_file"])
             url_base = config["url_base"]
             is_eltiempo = ("eltiempo" in url_base)
 
-            articles = []
-            # Conjunto de deduplicacion propio para El Tiempo (copia del historial global)
             seen_urls_et = set(global_seen_urls)
-            seen_titles_et = set()  # Dedup por titulo para El Tiempo
+            seen_titles_et = set()
             for cat_label, url in config["feeds"].items():
                 pct = int((current_task / total_tasks) * 100)
-                print(f"\nEspere un momento, estamos buscando noticias para sus Flowcards. ({pct}%)")
+                print(f"\nEspere un momento, buscando noticias para {site_name} - {cat_label} ({pct}%)")
                 art = fetch_top_article(url, cat_label, url_base, seen_urls_et, check_paywall=is_eltiempo)
                 current_task += 1
                 if art:
@@ -1249,32 +1239,33 @@ def run_scraper_selected(selected_sources=None, include_amp: bool = True):
                         seen_titles_et.add(title_key)
                         articles.append(art)
                     else:
-                        print(f"   [!] Omitido (titulo duplicado entre categorias): {art['titulo_raw'][:60]}")
-            # Agregar las URLs nuevas de El Tiempo al historial global
+                        print(f"   [!] Omitido (duplicado): {art['titulo_raw'][:60]}")
             global_seen_urls.update(seen_urls_et)
 
-            if not articles:
-                print(f"\n[!] No se encontraron articulos aptos para {site_name}.")
-                continue
-
-            export_to_excel(articles, out_path, site_name, include_amp=include_amp)
-            export_temas_del_dia(articles, work_dir)
+            if articles:
+                if run_flowcards:
+                    export_to_excel(articles, out_path, site_name, include_amp=include_amp)
+                    print(f"\n[+] Archivo {site_name}.xlsx generado exitosamente con {len(articles)} Flowcards.")
+                
+                if run_temas:
+                    export_temas_del_dia(articles, work_dir)
+            else:
+                print(f"\n[!] No se encontraron artículos aptos para {site_name}.")
 
     p_articles = []
     if run_portafolio:
-        print(f"\n\n--- INICIANDO EXTRACCION PARA: Portafolio ---")
+        print(f"\n\n--- INICIANDO EXTRACCIÓN PARA: Portafolio ---")
         p_config = PORTAFOLIO_CONFIG
         p_out_path = os.path.join(work_dir, str(p_config["output_file"]))
         p_url_base = str(p_config["url_base"])
         is_portafolio = ("portafolio" in p_url_base.lower())
 
-        # Conjunto de deduplicacion PROPIO para Portafolio (independiente de El Tiempo)
         p_seen_urls = set(global_seen_urls)
-        p_seen_titles = set()  # Dedup por titulo entre grupos de Portafolio
-        feeds_grouped_dict: dict = p_config.get("feeds_grouped", {})  # type: ignore
+        p_seen_titles = set()
+        feeds_grouped_dict: dict = p_config.get("feeds_grouped", {})
         for group_label, feed_list in feeds_grouped_dict.items():
             pct = int((current_task / total_tasks) * 100)
-            print(f"\nEspere un momento, estamos buscando noticias para sus Flowcards. ({pct}%)")
+            print(f"\nEspere un momento, buscando noticias para Portafolio - {group_label} ({pct}%)")
             art = fetch_top_from_group(feed_list, group_label, p_url_base, p_seen_urls, check_paywall=is_portafolio)
             current_task += 1
             if art:
@@ -1283,23 +1274,37 @@ def run_scraper_selected(selected_sources=None, include_amp: bool = True):
                     p_seen_titles.add(title_key)
                     p_articles.append(art)
                 else:
-                    print(f"   [!] Omitido (titulo duplicado entre grupos Portafolio): {art['titulo_raw'][:60]}")
-        # Agregar las URLs nuevas de Portafolio al historial global
+                    print(f"   [!] Omitido (duplicado Portafolio): {art['titulo_raw'][:60]}")
         global_seen_urls.update(p_seen_urls)
 
-    print(f"\nEspere un momento, estamos buscando noticias para sus Flowcards. (100%)")
-
-    if run_portafolio:
         if p_articles:
-            export_to_excel(p_articles, p_out_path, "Portafolio", include_amp=include_amp)
+            if run_flowcards:
+                export_to_excel(p_articles, p_out_path, "Portafolio", include_amp=include_amp)
+                print(f"\n[+] Archivo Portafolio.xlsx generado exitosamente con {len(p_articles)} Flowcards.")
         else:
-            print(f"\n[!] No se encontraron articulos aptos para Portafolio.")
+            print(f"\n[!] No se encontraron artículos aptos para Portafolio.")
+
+    print(f"\nEspere un momento, finalizando proceso. (100%)")
 
     try:
         with open(history_file, "w", encoding="utf-8") as f:
             json.dump(list(global_seen_urls), f, indent=4)
     except Exception as e:
         print(f"\n[!] No se pudo guardar el historial: {e}")
+
+    top_8 = []
+    if articles and run_temas:
+        top_8 = sorted(
+            articles,
+            key=lambda x: (x.get("seo_score", 0), x.get("timestamp", 0)),
+            reverse=True
+        )[:8]
+
+    return {
+        "El Tiempo": articles if run_el_tiempo else [],
+        "Portafolio": p_articles if run_portafolio else [],
+        "top": top_8
+    }
 
 import threading
 import os
