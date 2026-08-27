@@ -1397,195 +1397,522 @@ class RealtimeLog:
 _BaseAppClass = ctk.CTk if ctk is not None else object
 
 class FlowcatsApp(_BaseAppClass):
+    """
+    Interfaz Gráfica de Escritorio Flowcats v2.0
+    Diseño editorial Dark Slate idéntico a la versión Web.
+    """
     def __init__(self):
         if not HAS_GUI or ctk is None:
             raise RuntimeError("CustomTkinter / Tkinter no está disponible.")
         super().__init__()
         
-        # Configuracion de ventana
-        self.title("Flowcats - Generador de Noticias")
-        self.geometry("850x650")
+        # Paleta de colores editorial Web
+        self.C_BG0 = "#0B0F19"
+        self.C_BG1 = "#111827"
+        self.C_PANEL = "#161F30"
+        self.C_BORDER = "#22304A"
+        self.C_SPRING = "#00FA9A"
+        self.C_EMERALD = "#10B981"
+        self.C_PAPER = "#F2EEE3"
+        self.C_MUTED = "#94A3B8"
+        self.C_FAINT = "#64748B"
+        self.C_AMBER = "#FBBF24"
+        self.C_BLUE = "#3B82F6"
+        self.C_DARK_INK = "#070B14"
+
+        # Configuración de ventana principal
+        self.title("Flowcats v2.0 — Sala de Redacción Automatizada")
+        self.geometry("980x760")
+        self.minsize(880, 680)
+        self.configure(fg_color=self.C_BG0)
         ctk.set_appearance_mode("dark")
-        ctk.set_default_color_theme("blue")
         
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(2, weight=1)
-        
-        # Header Frame
-        self.header_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.header_frame.grid(row=0, column=0, padx=20, pady=(20, 10), sticky="ew")
+
+        # ── 1. CABECERA EDITORIAL (MASTHEAD) ──
+        self.header_frame = ctk.CTkFrame(
+            self,
+            fg_color=self.C_BG1,
+            corner_radius=10,
+            border_width=1,
+            border_color=self.C_BORDER
+        )
+        self.header_frame.grid(row=0, column=0, padx=18, pady=(16, 10), sticky="ew")
         self.header_frame.grid_columnconfigure(1, weight=1)
-        
-        # Logo
+
+        # Logo / Stamp
         try:
-            import sys
             if getattr(sys, 'frozen', False):
                 base_path = sys._MEIPASS # type: ignore
             else:
                 base_path = os.path.dirname(os.path.abspath(__file__))
             
             logo_path = os.path.join(base_path, "logo_flowcats.png")
-            logo_img = ctk.CTkImage(light_image=Image.open(logo_path),
-                                    dark_image=Image.open(logo_path),
-                                    size=(80, 80))
-            self.logo_label = ctk.CTkLabel(self.header_frame, image=logo_img, text="")
-            self.logo_label.grid(row=0, column=0, padx=(0, 15))
+            if os.path.exists(logo_path):
+                logo_img = ctk.CTkImage(
+                    light_image=Image.open(logo_path),
+                    dark_image=Image.open(logo_path),
+                    size=(56, 56)
+                )
+                self.logo_label = ctk.CTkLabel(self.header_frame, image=logo_img, text="")
+            else:
+                self.logo_label = ctk.CTkLabel(self.header_frame, text="🐈‍⬛", font=("Segoe UI Emoji", 38))
         except Exception:
-            self.logo_label = ctk.CTkLabel(self.header_frame, text="🐈‍⬛", font=("Century Gothic", 60))
-            self.logo_label.grid(row=0, column=0, padx=(0, 15))
+            self.logo_label = ctk.CTkLabel(self.header_frame, text="🐈‍⬛", font=("Segoe UI Emoji", 38))
+        self.logo_label.grid(row=0, column=0, rowspan=2, padx=(16, 12), pady=12)
 
-        # Titulo Textos
-        self.title_label = ctk.CTkLabel(self.header_frame, text="Flowcats", font=("Century Gothic", 36, "bold"), text_color="#E0E0E0")
-        self.title_label.grid(row=0, column=1, sticky="w")
-        self.subtitle_label = ctk.CTkLabel(self.header_frame, text="Generador de noticias El Tiempo & Portafolio", font=("Century Gothic", 14), text_color="#A0A0A0")
-        self.subtitle_label.grid(row=0, column=1, sticky="sw", pady=(40, 0))
+        # Título y Subtítulo
+        title_box = ctk.CTkFrame(self.header_frame, fg_color="transparent")
+        title_box.grid(row=0, column=1, rowspan=2, sticky="w", pady=10)
 
-        # Controles
-        self.controls_frame = ctk.CTkFrame(self, fg_color="#1a1a1a")
-        self.controls_frame.grid(row=1, column=0, padx=20, pady=10, sticky="ew")
-        self.controls_frame.grid_columnconfigure(3, weight=1)
+        title_row = ctk.CTkFrame(title_box, fg_color="transparent")
+        title_row.pack(anchor="w")
 
-        self.analysis_label = ctk.CTkLabel(
-            self.controls_frame,
-            text="Análisis El Tiempo: verificando...",
-            font=("Century Gothic", 12, "bold"),
-            text_color="#8ecae6"
+        self.title_label = ctk.CTkLabel(
+            title_row,
+            text="FLOWCATS",
+            font=("Century Gothic", 26, "bold"),
+            text_color=self.C_PAPER
         )
-        self.analysis_label.grid(row=0, column=0, padx=15, pady=(12, 0), sticky="w")
+        self.title_label.pack(side="left")
+
+        self.ver_chip = ctk.CTkLabel(
+            title_row,
+            text="v2.0 DESKTOP",
+            font=("Consolas", 10, "bold"),
+            text_color=self.C_SPRING,
+            fg_color="#064E3B",
+            corner_radius=4,
+            padx=7,
+            pady=2
+        )
+        self.ver_chip.pack(side="left", padx=(10, 0))
+
+        self.subtitle_label = ctk.CTkLabel(
+            title_box,
+            text="SALA DE REDACCIÓN AUTOMATIZADA · NOTICIAS & FLOWCARDS SEO",
+            font=("Consolas", 9, "bold"),
+            text_color=self.C_FAINT
+        )
+        self.subtitle_label.pack(anchor="w", pady=(3, 0))
+
+        # Badge de Estado IA
+        self.ai_badge = ctk.CTkLabel(
+            self.header_frame,
+            text="⚡ Groq AI (gpt-oss-120b) Activo",
+            font=("Consolas", 11, "bold"),
+            text_color="#6EE7B7",
+            fg_color="#064E3B",
+            corner_radius=6,
+            padx=12,
+            pady=6
+        )
+        self.ai_badge.grid(row=0, column=2, rowspan=2, padx=16, pady=12, sticky="e")
+
+        # ── 2. CUBIERTA / PANELES DE CONTROL (2 COLUMNAS) ──
+        self.deck_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.deck_frame.grid(row=1, column=0, padx=18, pady=0, sticky="ew")
+        self.deck_frame.grid_columnconfigure(0, weight=5)
+        self.deck_frame.grid_columnconfigure(1, weight=4)
+
+        # ── PANEL IZQUIERDO: CONFIGURACIÓN ──
+        self.cfg_panel = ctk.CTkFrame(
+            self.deck_frame,
+            fg_color=self.C_BG1,
+            corner_radius=10,
+            border_width=1,
+            border_color=self.C_BORDER
+        )
+        self.cfg_panel.grid(row=0, column=0, padx=(0, 8), pady=6, sticky="nsew")
+
+        cfg_tag = ctk.CTkLabel(
+            self.cfg_panel,
+            text="01 · CONFIGURACIÓN DE EXTRACCIÓN",
+            font=("Consolas", 10, "bold"),
+            text_color=self.C_SPRING
+        )
+        cfg_tag.pack(anchor="w", padx=16, pady=(12, 6))
+
+        # Tipos de proceso (Flowcards y Temas del Día)
+        mode_label = ctk.CTkLabel(
+            self.cfg_panel,
+            text="TIPO DE PROCESO",
+            font=("Consolas", 9, "bold"),
+            text_color=self.C_FAINT
+        )
+        mode_label.pack(anchor="w", padx=16, pady=(2, 4))
+
+        modes_box = ctk.CTkFrame(self.cfg_panel, fg_color="transparent")
+        modes_box.pack(fill="x", padx=16, pady=(0, 8))
+
+        self.flowcards_var = ctk.BooleanVar(value=True)
+        self.temas_var = ctk.BooleanVar(value=True)
+
+        self.flowcards_check = ctk.CTkCheckBox(
+            modes_box,
+            text="Flowcards SEO (máx 5 palabras)",
+            variable=self.flowcards_var,
+            font=("Century Gothic", 12, "bold"),
+            fg_color=self.C_EMERALD,
+            hover_color="#059669",
+            text_color=self.C_PAPER,
+            command=self.on_config_change
+        )
+        self.flowcards_check.pack(side="left", padx=(0, 16))
+
+        self.temas_check = ctk.CTkCheckBox(
+            modes_box,
+            text="Temas del Día (≤ 25c)",
+            variable=self.temas_var,
+            font=("Century Gothic", 12, "bold"),
+            fg_color=self.C_AMBER,
+            hover_color="#D97706",
+            text_color=self.C_PAPER,
+            command=self.on_config_change
+        )
+        self.temas_check.pack(side="left")
+
+        # Medios informativos
+        src_label = ctk.CTkLabel(
+            self.cfg_panel,
+            text="MEDIO INFORMATIVO",
+            font=("Consolas", 9, "bold"),
+            text_color=self.C_FAINT
+        )
+        src_label.pack(anchor="w", padx=16, pady=(4, 4))
+
+        sources_box = ctk.CTkFrame(self.cfg_panel, fg_color="transparent")
+        sources_box.pack(fill="x", padx=16, pady=(0, 8))
 
         self.el_tiempo_var = ctk.BooleanVar(value=True)
         self.portafolio_var = ctk.BooleanVar(value=True)
 
         self.el_tiempo_check = ctk.CTkCheckBox(
-            self.controls_frame,
-            text="El Tiempo",
+            sources_box,
+            text="El Tiempo (Nacional)",
             variable=self.el_tiempo_var,
-            font=("Century Gothic", 13),
-            command=self.on_source_toggle,
+            font=("Century Gothic", 12, "bold"),
+            fg_color=self.C_BLUE,
+            hover_color="#2563EB",
+            text_color=self.C_PAPER,
+            command=self.on_config_change
         )
-        self.el_tiempo_check.grid(row=0, column=1, padx=(0, 10), pady=(10, 0), sticky="w")
+        self.el_tiempo_check.pack(side="left", padx=(0, 16))
 
         self.portafolio_check = ctk.CTkCheckBox(
-            self.controls_frame,
-            text="Portafolio",
+            sources_box,
+            text="Portafolio (Economía)",
             variable=self.portafolio_var,
-            font=("Century Gothic", 13),
-            command=self.on_source_toggle,
+            font=("Century Gothic", 12, "bold"),
+            fg_color=self.C_AMBER,
+            hover_color="#D97706",
+            text_color=self.C_PAPER,
+            command=self.on_config_change
         )
-        self.portafolio_check.grid(row=0, column=2, padx=(0, 15), pady=(10, 0), sticky="w")
+        self.portafolio_check.pack(side="left")
 
-        # Separador visual
-        self.amp_separator = ctk.CTkLabel(
-            self.controls_frame,
-            text="│",
-            font=("Century Gothic", 18),
-            text_color="#444444"
-        )
-        self.amp_separator.grid(row=0, column=3, padx=(5, 5), pady=(10, 0))
+        # AMP Switch y Botón de Inicio
+        actions_row = ctk.CTkFrame(self.cfg_panel, fg_color="transparent")
+        actions_row.pack(fill="x", padx=16, pady=(4, 12))
 
-        # Checkbox AMP
         self.amp_var = ctk.BooleanVar(value=True)
-        self.amp_check = ctk.CTkCheckBox(
-            self.controls_frame,
+        self.amp_switch = ctk.CTkSwitch(
+            actions_row,
             text="Incluir URL AMP",
             variable=self.amp_var,
-            font=("Century Gothic", 13),
-            fg_color="#1565C0",
-            hover_color="#0D47A1",
+            font=("Century Gothic", 11),
+            text_color=self.C_MUTED,
+            progress_color=self.C_BLUE
         )
-        self.amp_check.grid(row=0, column=4, padx=(0, 15), pady=(10, 0), sticky="w")
-        
-        self.btn_run = ctk.CTkButton(self.controls_frame, text="Iniciar Búsqueda RSS", font=("Century Gothic", 14, "bold"), 
-                                     fg_color="#333333", hover_color="#555555", command=self.start_thread, height=40)
-        self.btn_run.grid(row=1, column=0, padx=15, pady=15, sticky="w")
-        
-        self.status_label = ctk.CTkLabel(self.controls_frame, text="Estado: Esperando inicio...", font=("Century Gothic", 13), text_color="#aaaaaa")
-        self.status_label.grid(row=1, column=1, columnspan=4, sticky="e", padx=15)
+        self.amp_switch.pack(side="left")
 
-        self.progress_bar = ctk.CTkProgressBar(self.controls_frame, mode="determinate", progress_color="#00fa9a")
-        self.progress_bar.grid(row=2, column=0, columnspan=5, padx=15, pady=(0, 15), sticky="ew")
+        self.btn_run = ctk.CTkButton(
+            actions_row,
+            text="▶ INICIAR BÚSQUEDA",
+            font=("Century Gothic", 12, "bold"),
+            fg_color=self.C_EMERALD,
+            hover_color=self.C_SPRING,
+            text_color="#04120C",
+            height=34,
+            corner_radius=6,
+            command=self.start_thread
+        )
+        self.btn_run.pack(side="right")
+
+        # ── PANEL DERECHO: ESTADO Y ACCESO A ARCHIVOS ──
+        self.files_panel = ctk.CTkFrame(
+            self.deck_frame,
+            fg_color=self.C_BG1,
+            corner_radius=10,
+            border_width=1,
+            border_color=self.C_BORDER
+        )
+        self.files_panel.grid(row=0, column=1, padx=(8, 0), pady=6, sticky="nsew")
+
+        status_tag = ctk.CTkLabel(
+            self.files_panel,
+            text="02 · ESTADO Y ARCHIVOS",
+            font=("Consolas", 10, "bold"),
+            text_color=self.C_SPRING
+        )
+        status_tag.pack(anchor="w", padx=16, pady=(12, 4))
+
+        # Status text y porcentaje
+        stat_row = ctk.CTkFrame(self.files_panel, fg_color="transparent")
+        stat_row.pack(fill="x", padx=16, pady=(2, 4))
+
+        self.status_label = ctk.CTkLabel(
+            stat_row,
+            text="En espera de instrucciones...",
+            font=("Century Gothic", 11),
+            text_color=self.C_MUTED,
+            anchor="w"
+        )
+        self.status_label.pack(side="left", fill="x", expand=True)
+
+        self.pct_label = ctk.CTkLabel(
+            stat_row,
+            text="0%",
+            font=("Consolas", 14, "bold"),
+            text_color=self.C_PAPER
+        )
+        self.pct_label.pack(side="right")
+
+        self.progress_bar = ctk.CTkProgressBar(
+            self.files_panel,
+            mode="determinate",
+            progress_color=self.C_SPRING,
+            fg_color=self.C_DARK_INK,
+            height=8,
+            corner_radius=4
+        )
+        self.progress_bar.pack(fill="x", padx=16, pady=(0, 10))
         self.progress_bar.set(0)
 
-        # Consola Log
-        self.log_box = ctk.CTkTextbox(self, font=("Consolas", 12), fg_color="#0d0d0d", text_color="#00fa9a")
-        self.log_box.grid(row=2, column=0, padx=20, pady=(10, 20), sticky="nsew")
+        # Botones de acceso rápido a Excel
+        files_btn_box = ctk.CTkFrame(self.files_panel, fg_color="transparent")
+        files_btn_box.pack(fill="x", padx=16, pady=(0, 10))
+
+        self.btn_open_et = ctk.CTkButton(
+            files_btn_box,
+            text="📊 El Tiempo.xlsx",
+            font=("Consolas", 10, "bold"),
+            fg_color="#1E293B",
+            hover_color="#334155",
+            text_color=self.C_BLUE,
+            height=28,
+            corner_radius=5,
+            command=lambda: self.open_excel_file("El Tiempo.xlsx")
+        )
+        self.btn_open_et.pack(side="left", padx=(0, 6), expand=True, fill="x")
+
+        self.btn_open_pf = ctk.CTkButton(
+            files_btn_box,
+            text="📊 Portafolio.xlsx",
+            font=("Consolas", 10, "bold"),
+            fg_color="#1E293B",
+            hover_color="#334155",
+            text_color=self.C_AMBER,
+            height=28,
+            corner_radius=5,
+            command=lambda: self.open_excel_file("Portafolio.xlsx")
+        )
+        self.btn_open_pf.pack(side="left", padx=(0, 6), expand=True, fill="x")
+
+        self.btn_open_temas = ctk.CTkButton(
+            files_btn_box,
+            text="⭐ TEMAS DÍA.xlsx",
+            font=("Consolas", 10, "bold"),
+            fg_color="#1E293B",
+            hover_color="#334155",
+            text_color=self.C_SPRING,
+            height=28,
+            corner_radius=5,
+            command=lambda: self.open_excel_file("TEMAS DEL DÍA.xlsx")
+        )
+        self.btn_open_temas.pack(side="left", expand=True, fill="x")
+
+        # ── 3. TERMINAL EDITORIAL / CONSOLA EN VIVO ──
+        self.term_frame = ctk.CTkFrame(
+            self,
+            fg_color=self.C_BG1,
+            corner_radius=10,
+            border_width=1,
+            border_color=self.C_BORDER
+        )
+        self.term_frame.grid(row=2, column=0, padx=18, pady=(8, 16), sticky="nsew")
+        self.term_frame.grid_columnconfigure(0, weight=1)
+        self.term_frame.grid_rowconfigure(1, weight=1)
+
+        # Header de la consola
+        term_header = ctk.CTkFrame(self.term_frame, fg_color=self.C_DARK_INK, corner_radius=6, height=32)
+        term_header.grid(row=0, column=0, padx=8, pady=(8, 4), sticky="ew")
+
+        dots_label = ctk.CTkLabel(
+            term_header,
+            text="🔴 🟡 🟢",
+            font=("Segoe UI Emoji", 10)
+        )
+        dots_label.pack(side="left", padx=10)
+
+        term_title = ctk.CTkLabel(
+            term_header,
+            text="MESA DE REDACCIÓN · CONSOLA EN VIVO",
+            font=("Consolas", 10, "bold"),
+            text_color=self.C_FAINT
+        )
+        term_title.pack(side="left", padx=6)
+
+        self.btn_clear_log = ctk.CTkButton(
+            term_header,
+            text="Limpiar",
+            font=("Consolas", 9),
+            fg_color="transparent",
+            hover_color="#1E293B",
+            text_color=self.C_MUTED,
+            width=50,
+            height=20,
+            command=self.clear_logs
+        )
+        self.btn_clear_log.pack(side="right", padx=10)
+
+        # Cuerpo del Log
+        self.log_box = ctk.CTkTextbox(
+            self.term_frame,
+            font=("Consolas", 11),
+            fg_color=self.C_DARK_INK,
+            text_color=self.C_SPRING,
+            corner_radius=6
+        )
+        self.log_box.grid(row=1, column=0, padx=8, pady=(0, 8), sticky="nsew")
         self.log_box.configure(state="disabled")
 
         self.original_stdout = sys.stdout
         self.refresh_analysis_status()
-
-    def get_selected_sources(self):
-        selected_sources = []
-        if self.el_tiempo_var.get():
-            selected_sources.append("El Tiempo")
-        if self.portafolio_var.get():
-            selected_sources.append("Portafolio")
-        return selected_sources
-
-    def on_source_toggle(self):
-        if self.get_selected_sources():
-            self.btn_run.configure(state="normal")
-            self.status_label.configure(text="Estado: Esperando inicio...", text_color="#aaaaaa")
-        else:
-            self.btn_run.configure(state="disabled")
-            self.status_label.configure(text="Estado: Seleccione al menos un medio", text_color="#ffb347")
+        self.check_generated_files()
 
     def refresh_analysis_status(self):
         if get_groq_api_key():
-            self.analysis_label.configure(
-                text="Análisis El Tiempo: Groq AI activo (3 palabras)",
-                text_color="#00fa9a"
+            self.ai_badge.configure(
+                text="⚡ Groq AI (gpt-oss-120b) Activo",
+                fg_color="#064E3B",
+                text_color="#6EE7B7"
             )
             return "Groq AI"
+        else:
+            self.ai_badge.configure(
+                text="⚙ Modo Heurístico",
+                fg_color="#78350F",
+                text_color=self.C_AMBER
+            )
+            return "Heurístico"
 
-        self.analysis_label.configure(
-            text="Análisis El Tiempo: modo heurístico",
-            text_color="#ffb347"
-        )
-        return "Heuristico"
+    def on_config_change(self):
+        has_sources = self.el_tiempo_var.get() or self.portafolio_var.get()
+        has_modes = self.flowcards_var.get() or self.temas_var.get()
 
-    def update_progress(self, pct):
-        self.progress_bar.set(pct / 100.0)
-        if pct == 100:
-            self.status_label.configure(text="Estado: Proceso completado exitosamente", text_color="#00fa9a")
-            self.btn_run.configure(state="normal", text="Búsqueda Finalizada")
+        if has_sources and has_modes:
+            self.btn_run.configure(state="normal", fg_color=self.C_EMERALD)
+            self.status_label.configure(text="Listo para ejecutar", text_color=self.C_MUTED)
+        else:
+            self.btn_run.configure(state="disabled", fg_color="#334155")
+            if not has_sources:
+                self.status_label.configure(text="Seleccione al menos un medio", text_color=self.C_AMBER)
+            elif not has_modes:
+                self.status_label.configure(text="Seleccione al menos un tipo de proceso", text_color=self.C_AMBER)
 
-    def start_thread(self):
-        selected_sources = self.get_selected_sources()
-        if not selected_sources:
-            self.status_label.configure(text="Estado: Seleccione al menos un medio", text_color="#ffb347")
-            return
-        include_amp = self.amp_var.get()
-        analysis_mode = self.refresh_analysis_status()
-        self.btn_run.configure(state="disabled", text="Procesando...")
-        amp_txt = "con AMP" if include_amp else "sin AMP"
-        self.status_label.configure(text=f"Estado: Extrayendo ({analysis_mode}, {amp_txt})...", text_color="#FFFFFF")
-        self.progress_bar.set(0.0)
+    def get_selected_sources(self):
+        sources = []
+        if self.el_tiempo_var.get():
+            sources.append("El Tiempo")
+        if self.portafolio_var.get():
+            sources.append("Portafolio")
+        return sources
+
+    def get_process_type(self):
+        fc = self.flowcards_var.get()
+        td = self.temas_var.get()
+        if fc and td:
+            return "both"
+        elif td:
+            return "temas_del_dia"
+        return "flowcards"
+
+    def clear_logs(self):
         self.log_box.configure(state="normal")
         self.log_box.delete("1.0", "end")
         self.log_box.configure(state="disabled")
+
+    def open_excel_file(self, filename: str):
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        path = os.path.join(base_dir, filename)
+        if os.path.exists(path):
+            try:
+                os.startfile(path)
+            except Exception as e:
+                print(f"[!] No se pudo abrir {filename}: {e}")
+        else:
+            print(f"[!] El archivo '{filename}' aún no ha sido generado.")
+
+    def check_generated_files(self):
+        base_dir = os.path.dirname(os.path.abspath(__file__))
         
-        # Redireccionar print() -> UI
+        if os.path.exists(os.path.join(base_dir, "El Tiempo.xlsx")):
+            self.btn_open_et.configure(fg_color="#1E3A5F", text_color="#60A5FA")
+        if os.path.exists(os.path.join(base_dir, "Portafolio.xlsx")):
+            self.btn_open_pf.configure(fg_color="#5F3A1E", text_color=self.C_AMBER)
+        if os.path.exists(os.path.join(base_dir, "TEMAS DEL DÍA.xlsx")) or os.path.exists(os.path.join(base_dir, "TEMAS DEL DIA.xlsx")):
+            self.btn_open_temas.configure(fg_color="#064E3B", text_color=self.C_SPRING)
+
+    def update_progress(self, pct):
+        self.progress_bar.set(pct / 100.0)
+        self.pct_label.configure(text=f"{pct}%")
+        if pct == 100:
+            self.status_label.configure(text="✔ Proceso completado exitosamente", text_color=self.C_SPRING)
+            self.btn_run.configure(state="normal", text="▶ INICIAR BÚSQUEDA", fg_color=self.C_EMERALD)
+            self.check_generated_files()
+
+    def start_thread(self):
+        sources = self.get_selected_sources()
+        if not sources:
+            return
+        
+        process_type = self.get_process_type()
+        include_amp = self.amp_var.get()
+        ai_mode = self.refresh_analysis_status()
+
+        self.btn_run.configure(state="disabled", text="⏳ PROCESANDO...", fg_color="#334155")
+        self.status_label.configure(text=f"Extrayendo noticias ({ai_mode})...", text_color=self.C_PAPER)
+        self.progress_bar.set(0.0)
+        self.pct_label.configure(text="0%")
+        self.clear_logs()
+
+        # Redireccionar salida estándar a la consola visual
         sys.stdout = RealtimeLog(self.log_box, self.update_progress) # type: ignore
-        
-        # Iniciar hilo en segundo plano
-        self.thread = threading.Thread(target=self.run_process, args=(selected_sources, include_amp), daemon=True)
+
+        # Lanzar tarea en segundo plano
+        self.thread = threading.Thread(
+            target=self.run_process,
+            args=(sources, process_type, include_amp),
+            daemon=True
+        )
         self.thread.start()
 
-    def run_process(self, selected_sources, include_amp=True):
+    def run_process(self, sources, process_type, include_amp):
         try:
-            run_scraper_selected(selected_sources, include_amp=include_amp)
+            run_scraper_selected(sources, process_type=process_type, include_amp=include_amp)
         except Exception as e:
-            print(f"\n[ERROR] Ocurrió un fallo: {e}")
-            self.status_label.configure(text="Estado: Error en la ejecución", text_color="#FF0000")
-            self.btn_run.configure(state="normal", text="Reintentar")
+            print(f"\n[ERROR] Ocurrió un fallo en la extracción: {e}")
+            self.status_label.configure(text="Error en la ejecución", text_color="#F87171")
+            self.btn_run.configure(state="normal", text="Reintentar", fg_color=self.C_EMERALD)
         finally:
             sys.stdout = self.original_stdout
-            
+
     def on_closing(self):
         try:
             sys.stdout = self.original_stdout
-        except:
+        except Exception:
             pass
         self.destroy()
 
@@ -1603,3 +1930,4 @@ if __name__ == "__main__":
         print("[!] Interfaz gráfica no disponible en este entorno (falta _tkinter / CustomTkinter).")
         print("[*] Ejecutando extracción en modo consola (CLI)...")
         run_scraper_selected(["El Tiempo", "Portafolio"], include_amp=True)
+
