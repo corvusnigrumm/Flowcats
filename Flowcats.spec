@@ -1,12 +1,33 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
+from PyInstaller.utils.hooks import collect_data_files
 
+datas = [('logo_flowcats.png', '.')]
+if os.path.exists('TEMAS DEL DÍA.xlsx'):
+    datas.append(('TEMAS DEL DÍA.xlsx', '.'))
+
+datas += collect_data_files('customtkinter')
 
 a = Analysis(
     ['automatizacion_santamaria.py'],
     pathex=[],
     binaries=[],
-    datas=[('logo_flowcats.png', '.')],
-    hiddenimports=['openpyxl', 'requests', 'lxml', 'bs4', 'customtkinter', 'PIL', 'Pillow'],
+    datas=datas,
+    hiddenimports=[
+        'openpyxl',
+        'requests',
+        'lxml',
+        'lxml.etree',
+        'bs4',
+        'customtkinter',
+        'PIL',
+        'PIL.Image',
+        'Pillow',
+        'groq',
+        'httpx',
+        'pydantic',
+        'anyio'
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
