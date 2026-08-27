@@ -212,11 +212,11 @@ STOP_WORDS = {
 # UTILIDADES Y PROCESAMIENTO
 # ─────────────────────────────────────────────
 
-def clean_and_format_title(raw_title: str, max_words: int = 3) -> str:
+def clean_and_format_title(raw_title: str, max_words: int = 5) -> str:
     """
-    Formatea el titular periodístico para Flowcards:
-    - MÁXIMO 3 PALABRAS significativas (sin stopwords como el, la, los, las, de, del, en, para, etc.).
-    - Conserva las 3 palabras clave de mayor valor informativo.
+    Formatea el titular periodístico para Flowcards cuando no hay IA:
+    - Conserva las palabras clave y conectores indispensables para mantener la coherencia y sentido (máx max_words palabras).
+    - Evita cortar palabras a la mitad o dejar frases incomprensibles.
     """
     if not raw_title or not str(raw_title).strip():
         return "Sin título"
@@ -232,16 +232,21 @@ def clean_and_format_title(raw_title: str, max_words: int = 3) -> str:
     text = re.sub(r',\s*según\s+.*$', '', text, flags=re.IGNORECASE)
     
     # 3. Limpiar signos extraños
-    text = re.sub(r'[^\w\sÁÉÍÓÚáéíóúñÑüÜ-]', ' ', text)
+    text = re.sub(r'[^\w\sÁÉÍÓÚáéíóúñÑüÜ.,;:\-]', ' ', text)
     
-    # 4. Filtrar palabras vacías (stopwords) para obtener exactamente hasta 3 palabras clave
     words = [w.strip() for w in text.split() if w.strip()]
-    meaningful = [w for w in words if w.lower() not in HANGING_WORDS and len(w) > 1]
-    
-    if not meaningful:
-        meaningful = words
+    if not words:
+        return "Sin título"
         
-    return " ".join(meaningful[:max_words]).title()
+    selected = words[:max_words]
+    # Quitar conectores que queden colgando al final si la frase se recorta
+    while selected and selected[-1].lower() in HANGING_WORDS and len(selected) > 2:
+        selected.pop()
+        
+    res = " ".join(selected)
+    if res:
+        res = res[0].upper() + res[1:]
+    return res
 
 def shorten_title_smart(title: str, max_words: int = 10) -> str:
     """Función de compatibilidad que llama a clean_and_format_title."""
@@ -399,21 +404,25 @@ def analyze_with_groq(article: dict) -> dict | None:
     category = article.get("categoria", "")
     summary = article.get("resumen", "")
 
+    # Bug 2 fix: prompt reescrito para titular con sentido real, no solo keywords
     prompt = (
         f"Eres un editor periodístico senior de El Tiempo / Portafolio.\n"
-        f"Tu tarea es generar un titular para Flowcard de MÁXIMO 3 PALABRAS CLAVE con total impacto y sentido informativo.\n\n"
+        f"Tu tarea es generar un TITULAR PERIODÍSTICO para Flowcard de MÁXIMO 5 PALABRAS.\n\n"
         f"DATOS DE LA NOTICIA:\n"
         f"- Categoría: {category}\n"
         f"- Titular original: {raw_title}\n"
         f"- Resumen: {summary}\n\n"
         f"REGLAS OBLIGATORIAS PARA EL TITULAR FLOWCARD:\n"
-        f"1. MÁXIMO 3 PALABRAS CLAVE (excluyendo conectores como 'el', 'la', 'de', 'del', 'en', 'para', 'con', 'por', 'sus', 'un', 'una', 'al').\n"
-        f"2. Las 3 palabras deben resumir lo más importante de la noticia con total claridad.\n"
-        f"3. Ejemplos excelentes: 'Visas Bogotá Aceleradas', 'Turismo Ballenas Buenaventura', 'Reforma Pensional Corte', 'Tolima Fuera Libertadores'.\n"
-        f"4. Evalúa el potencial SEO y tendencia (0-100).\n\n"
+        f"1. MÁXIMO 5 PALABRAS en total (incluyendo conectores si son necesarios para el sentido).\n"
+        f"2. El titular debe tener SENTIDO COMPLETO: incluye las keywords más importantes de la noticia.\n"
+        f"3. Debe ser un titular PERIODÍSTICO de alto impacto, no solo una lista de palabras.\n"
+        f"4. Ejemplos excelentes: 'Dólar baja a mínimos', 'Reforma pensional en la Corte',\n"
+        f"   'Bogotá acelera visas turistas', 'Ballenas en Buenaventura', 'Petro anuncia cambios'.\n"
+        f"5. Ejemplos MALOS (evitar): 'Dólar Mínimos' (sin sentido), 'Reforma Pensional Corte' (telegráfico).\n"
+        f"6. Evalúa el potencial SEO y tendencia (0-100).\n\n"
         f'Responde ÚNICAMENTE en formato JSON estructurado:\n'
         f'{{\n'
-        f'  "titulo_flowcard": "Tres Palabras Clave",\n'
+        f'  "titulo_flowcard": "Titular con sentido",\n'
         f'  "seo_score": 88,\n'
         f'  "seo_level": "Muy alto",\n'
         f'  "seo_reason": "Motivo del impacto periodístico",\n'
@@ -428,9 +437,9 @@ def analyze_with_groq(article: dict) -> dict | None:
         
         models_to_try = [
             "openai/gpt-oss-120b",
-            "llama-3.3-70b-versatile",
-            "llama-3.1-70b-versatile",
-            "llama3-70b-8192"
+            "openai/gpt-oss-20b",
+            "qwen/qwen3.8-27b",
+            "qwen/qwen3.6-27b"
         ]
         
         for m in models_to_try:
@@ -438,7 +447,7 @@ def analyze_with_groq(article: dict) -> dict | None:
                 chat_completion = client.chat.completions.create(
                     model=m,
                     messages=[
-                        {"role": "system", "content": "Eres un editor periodístico experto. Generas titulares de exactamente 3 palabras clave y respondes únicamente en formato JSON."},
+                        {"role": "system", "content": "Eres un editor periodístico experto en titulares de alto impacto. Generas titulares breves (máx 5 palabras) con sentido completo y respondes únicamente en formato JSON."},
                         {"role": "user", "content": prompt}
                     ],
                     temperature=0.3,
@@ -451,9 +460,17 @@ def analyze_with_groq(article: dict) -> dict | None:
                     score = int(data_json.get("seo_score", 80))
                     score = max(0, min(100, score))
                     raw_tf = str(data_json.get("titulo_flowcard", "")).strip()
-                    titulo_flow = clean_and_format_title(raw_tf, max_words=3)
+
+                    # Bug 1 fix: NO aplicar clean_and_format_title() sobre el resultado de la IA.
+                    # Solo limpiar caracteres extraños y aplicar title case sin recortar palabras.
+                    titulo_flow = re.sub(r'[^\w\sÁÉÍÓÚáéíóúñÑüÜ.,;:\-]', '', raw_tf).strip()
+                    titulo_flow = " ".join(titulo_flow.split())  # normalizar espacios
+                    if titulo_flow:
+                        titulo_flow = titulo_flow[0].upper() + titulo_flow[1:]  # capitalizar primera letra
+
+                    # Fallback si la IA devuelve algo vacío o sin sentido (<2 palabras)
                     if not titulo_flow or len(titulo_flow.split()) < 2:
-                        titulo_flow = clean_and_format_title(raw_title, max_words=3)
+                        titulo_flow = clean_and_format_title(raw_title, max_words=5)
                     
                     return {
                         "seo_score": score,
@@ -472,12 +489,17 @@ def analyze_with_groq(article: dict) -> dict | None:
     return None
 
 def shorten_to_25_chars(title: str) -> str:
-    """Asegura de forma estricta e inviolable que el titular tenga MÁXIMO 25 caracteres totales."""
+    """Asegura de forma estricta que el titular tenga MÁXIMO 25 caracteres y no termine en palabras colgantes o puntuación suelta."""
     if not title:
         return "Sin título"
-    clean = re.sub(r'[^\w\sÁÉÍÓÚáéíóúñÑüÜ.,;:-]', '', str(title).strip()).strip()
+    clean = re.sub(r'[^\w\sÁÉÍÓÚáéíóúñÑüÜ.,;:\-]', '', str(title).strip()).strip()
+    clean = clean.rstrip(".,;: -")
     if len(clean) <= 25:
-        return clean
+        words = clean.split()
+        while words and words[-1].lower() in HANGING_WORDS and len(words) > 1:
+            words.pop()
+        return " ".join(words) if words else clean
+
     words = clean.split()
     result = []
     current_len = 0
@@ -487,60 +509,78 @@ def shorten_to_25_chars(title: str) -> str:
             break
         result.append(w)
         current_len = projected
+    # Eliminar conectores que hayan quedado truncados al final
+    while result and result[-1].lower() in HANGING_WORDS and len(result) > 1:
+        result.pop()
     if not result:
-        return clean[:25].rstrip()
-    return " ".join(result)
+        return clean[:25].rstrip(" .,;:-")
+    return " ".join(result).rstrip(".,;:-")
 
 def generate_temas_del_dia_headline(article: dict) -> str:
-    """Genera un titular para 'Temas del Día' de MÁXIMO 25 caracteres totales con IA Groq."""
+    """Genera un titular para 'Temas del Día' de MÁXIMO 25 caracteres totales con IA Groq.
+    Bug 3 fix: prompt mejorado para garantizar coherencia periodística (verbo+sujeto, keywords, sin cortes).
+    """
     api_key = get_groq_api_key()
     raw_title = article.get("titulo_raw", "")
     summary = article.get("resumen", "")
+    category = article.get("categoria", "")
     
     if api_key:
         prompt = (
-            f"Eres un editor de portadas. Crea un titular de impacto para 'Temas del Día'.\n"
-            f"REGLA CRÍTICA INVIOLABLE:\n"
-            f"- El titular DEBE tener MÁXIMO 25 CARACTERES TOTALES (contando letras y espacios).\n"
-            f"- Si pasa de 25 caracteres será RECHAZADO.\n"
-            f"- Debe tener sentido completo y excelente redacción en español.\n"
-            f"- Ejemplos excelentes: 'Petro anuncia reformas' (22c), 'Dólar baja a mínimo' (19c), 'Alerta roja por lluvias' (22c).\n\n"
-            f"Noticia:\n"
-            f"Título original: {raw_title}\n"
-            f"Resumen: {summary}\n\n"
-            f'Responde ÚNICAMENTE en formato JSON: {{"titular_25": "Titular <= 25 chars"}}'
+            f"Eres un editor de portadas periodísticas de El Tiempo / Portafolio.\n"
+            f"Crea un TITULAR BREVE DE PORTADA para 'Temas del Día'.\n\n"
+            f"REGLAS CRÍTICAS INVIOLABLES:\n"
+            f"1. LONGITUD: ENTRE 15 Y 24 CARACTERES TOTALES (contando espacios y letras). NUNCA superar 25 caracteres.\n"
+            f"2. SENTIDO COMPLETO: Debe tener sujeto + verbo o ser una frase periodística coherente y natural.\n"
+            f"3. KEYWORDS: Incluye la palabra clave principal de la noticia (economía, política, seguridad, etc.).\n"
+            f"4. NUNCA termines en preposiciones como 'de', 'en', 'a', 'por', 'con', 'para'.\n"
+            f"5. EJEMPLOS PERFECTOS (fíjate en el conteo de caracteres):\n"
+            f"   - 'Dólar baja a mínimos' (20 caracteres)\n"
+            f"   - 'Petro anuncia reformas' (22 caracteres)\n"
+            f"   - 'Alerta roja en Bogotá' (22 caracteres)\n"
+            f"   - 'Tasas de interés caen' (22 caracteres)\n"
+            f"   - 'Crisis política crece' (22 caracteres)\n"
+            f"   - 'Corte frena reforma' (19 caracteres)\n\n"
+            f"NOTICIA:\n"
+            f"- Categoría: {category}\n"
+            f"- Título original: {raw_title}\n"
+            f"- Resumen: {summary[:250]}\n\n"
+            f'Responde ÚNICAMENTE en formato JSON: {{"titular_25": "Titular Breve"}}'
         )
         try:
             from groq import Groq
             client = Groq(api_key=api_key)
-            for m in ["openai/gpt-oss-120b", "llama-3.3-70b-versatile", "llama3-70b-8192"]:
+            for m in ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b", "qwen/qwen3.6-27b"]:
                 try:
                     resp = client.chat.completions.create(
                         model=m,
                         messages=[
-                            {"role": "system", "content": "Eres un editor de portadas breves. Creas titulares con límite estricto de 25 caracteres y sentido completo."},
+                            {"role": "system", "content": "Eres un editor de portadas periodísticas. Creas titulares concisos de entre 15 y 24 caracteres con sentido completo y alto impacto."},
                             {"role": "user", "content": prompt}
                         ],
                         temperature=0.2,
-                        max_completion_tokens=256,
+                        max_completion_tokens=128,
                         response_format={"type": "json_object"}
                     )
                     content = resp.choices[0].message.content
                     if content:
                         parsed = json.loads(content)
                         t25 = str(parsed.get("titular_25", "")).strip()
-                        if t25:
+                        t25 = t25.rstrip(".,;: -\"'")
+                        # Validación: entre 8 y 25 caracteres y al menos 2 palabras
+                        if t25 and len(t25.split()) >= 2:
                             return shorten_to_25_chars(t25)
                 except Exception:
                     continue
         except Exception:
             pass
 
+    # Fallback heurístico si no hay IA
     return shorten_to_25_chars(raw_title)
 
 def export_temas_del_dia(articles: list, work_dir: str) -> str | None:
     """
-    Selecciona las mejores 8 noticias de El Tiempo, genera para cada una un titular de <=25 caracteres con IA Groq
+    Selecciona las mejores 8 noticias de El Tiempo / Portafolio, genera para cada una un titular de <=25 caracteres con IA Groq
     y actualiza la plantilla 'TEMAS DEL DÍA.xlsx'.
     """
     if not articles:
@@ -549,10 +589,9 @@ def export_temas_del_dia(articles: list, work_dir: str) -> str | None:
 
     template_file = os.path.join(work_dir, "TEMAS DEL DÍA.xlsx")
     if not os.path.exists(template_file):
-        template_file = "TEMAS DEL DÍA.xlsx"
+        template_file = os.path.join(work_dir, "TEMAS DEL DIA.xlsx")
         if not os.path.exists(template_file):
-            print(f"\n[!] No se encontró la plantilla 'TEMAS DEL DÍA.xlsx'")
-            return None
+            template_file = "TEMAS DEL DÍA.xlsx"
 
     # Ordenar noticias por puntaje SEO o frescura y elegir las 8 mejores
     top_8 = sorted(
@@ -564,12 +603,37 @@ def export_temas_del_dia(articles: list, work_dir: str) -> str | None:
     print(f"\n--- PROCESANDO TEMAS DEL DÍA (Top 8 noticias con IA Groq) ---")
 
     try:
-        wb = openpyxl.load_workbook(template_file)
-        ws = wb.active
+        if os.path.exists(template_file):
+            wb = openpyxl.load_workbook(template_file)
+            ws = wb.active
+        else:
+            # Crear libro con formato si no existe
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "TEMAS DEL DÍA"
+            template_file = os.path.join(work_dir, "TEMAS DEL DÍA.xlsx")
+            
+            # Encabezados
+            encabezados = ["RANKING", "CARACTERES", "TÍTULO (<= 25 chars)", "URL"]
+            hdr_fill = PatternFill("solid", fgColor="000000")
+            hdr_font = Font(name="Century Gothic", bold=True, color="FFFFFF", size=11)
+            hdr_align = Alignment(horizontal="center", vertical="center")
+            ws.row_dimensions[1].height = 25
+            for col, texto in enumerate(encabezados, 1):
+                cell = ws.cell(row=1, column=col, value=texto)
+                cell.fill = hdr_fill
+                cell.font = hdr_font
+                cell.alignment = hdr_align
+                cell.border = thin_border()
+            ws.column_dimensions["A"].width = 12
+            ws.column_dimensions["B"].width = 15
+            ws.column_dimensions["C"].width = 35
+            ws.column_dimensions["D"].width = 65
 
         for idx, art in enumerate(top_8, 1):
             row = idx + 2  # Filas 3 a 10
             titular_25 = generate_temas_del_dia_headline(art)
+            art["titulo_temas_25"] = titular_25
             url_target = art.get("url_amp") or art.get("url_original", "")
 
             ws.cell(row=row, column=1, value=idx)                # Col A: RANKING
@@ -734,14 +798,32 @@ def fetch_top_article(feed_url: str, label: str, url_base: str, seen_urls: set, 
         if art_url in seen_urls:
             continue
 
-        # Si es Portafolio, filtrar y omitir cualquier nota de la categoría u origen Opinión
-        if "portafolio" in url_base.lower():
-            cat_check = str(item_data.get("cat_raw", "") or "").lower()
-            url_check = str(art_url or "").lower()
-            if "opinion" in cat_check or "opinión" in cat_check or "/opinion/" in url_check:
-                seen_urls.add(art_url)
-                print(f"   [!] Omitido (Categoría Opinión en Portafolio): {item_data['titulo_raw'][:60]}")
-                continue
+        # Bug 6 fix: filtrar opinión, videos y podcasts en AMBOS medios
+        cat_check = str(item_data.get("cat_raw", "") or "").lower()
+        url_check = str(art_url or "").lower()
+        titulo_check = str(item_data.get("titulo_raw", "") or "").lower()
+
+        # Filtrar contenido de opinión
+        if "opinion" in cat_check or "opinión" in cat_check or "/opinion/" in url_check:
+            seen_urls.add(art_url)
+            print(f"   [!] Omitido (Opinión): {item_data['titulo_raw'][:60]}")
+            continue
+
+        # Filtrar videos y podcasts
+        if "/video/" in url_check or "/videos/" in url_check:
+            seen_urls.add(art_url)
+            print(f"   [!] Omitido (Video): {item_data['titulo_raw'][:60]}")
+            continue
+        if "/podcast/" in url_check or "/podcasts/" in url_check:
+            seen_urls.add(art_url)
+            print(f"   [!] Omitido (Podcast): {item_data['titulo_raw'][:60]}")
+            continue
+
+        # Filtrar por prefijo en el título (videos, fotos, galería, etc.) — ya cubiertos en PREFIX_NOISE
+        if re.match(r'^(video|fotos|galería|podcast|en vivo|en directo)\s*[:\-]', titulo_check):
+            seen_urls.add(art_url)
+            print(f"   [!] Omitido (formato no válido): {item_data['titulo_raw'][:60]}")
+            continue
 
         if check_paywall and is_subscriber_only(art_url):
             file_name_part = str(art_url.split('/')[-1])
@@ -759,6 +841,7 @@ def fetch_top_article(feed_url: str, label: str, url_base: str, seen_urls: set, 
         titulo_3 = clean_and_format_title(item_data["titulo_raw"])
         url_amp  = make_amp_url(art_url, url_base)
 
+        medio_name = "El Tiempo" if "eltiempo" in url_base.lower() else "Portafolio"
         article_data = {
             "titulo_3":     titulo_3,
             "titulo_raw":   item_data["titulo_raw"],
@@ -769,18 +852,20 @@ def fetch_top_article(feed_url: str, label: str, url_base: str, seen_urls: set, 
             "hora":         item_data["hora"],
             "timestamp":    item_data["timestamp"],
             "resumen":      item_data["resumen"],
+            "medio":        medio_name,
+            "source_name":  medio_name,
         }
-        if "eltiempo" in url_base.lower():
-            ai_analysis = analyze_with_groq(article_data)
-            if ai_analysis:
-                if ai_analysis.get("titulo_flowcard"):
-                    article_data["titulo_3"] = ai_analysis["titulo_flowcard"]
-                    titulo_3 = article_data["titulo_3"]
-                article_data.update(ai_analysis)
-            else:
-                heuristic_analysis = analyze_seo_potential(article_data)
-                heuristic_analysis["analysis_source"] = "Heuristico"
-                article_data.update(heuristic_analysis)
+        # Bug 4 fix: habilitar analyze_with_groq para AMBOS medios (El Tiempo y Portafolio)
+        ai_analysis = analyze_with_groq(article_data)
+        if ai_analysis:
+            if ai_analysis.get("titulo_flowcard"):
+                article_data["titulo_3"] = ai_analysis["titulo_flowcard"]
+                titulo_3 = article_data["titulo_3"]
+            article_data.update(ai_analysis)
+        else:
+            heuristic_analysis = analyze_seo_potential(article_data)
+            heuristic_analysis["analysis_source"] = "Heuristico"
+            article_data.update(heuristic_analysis)
 
         print(f"   OK -> \"{titulo_3}\" | {item_data['fecha']} {item_data['hora']}")
         return article_data
@@ -1206,11 +1291,8 @@ def run_scraper_selected(selected_sources=None, process_type: str = "both", incl
                 if run_flowcards:
                     export_to_excel(articles, out_path, site_name, include_amp=include_amp)
                     print(f"\n[+] Archivo {site_name}.xlsx generado exitosamente con {len(articles)} Flowcards.")
-                
-                if run_temas:
-                    export_temas_del_dia(articles, work_dir)
             else:
-                print(f"\n[!] No se encontraron artículos aptos para {site_name}.")
+                print(f"\n[!] No se encontró artículos aptos para {site_name}.")
 
     p_articles = []
     if run_portafolio:
@@ -1252,13 +1334,20 @@ def run_scraper_selected(selected_sources=None, process_type: str = "both", incl
     except Exception as e:
         print(f"\n[!] No se pudo guardar el historial: {e}")
 
+    # Bug 5 fix: export_temas_del_dia se ejecuta INDEPENDIENTEMENTE del medio seleccionado.
+    # Toma los artículos de El Tiempo si existen, o los de Portafolio como fallback.
     top_8 = []
-    if articles and run_temas:
-        top_8 = sorted(
-            articles,
-            key=lambda x: (x.get("seo_score", 0), x.get("timestamp", 0)),
-            reverse=True
-        )[:8]
+    if run_temas:
+        all_articles_for_temas = articles if articles else p_articles
+        if all_articles_for_temas:
+            export_temas_del_dia(all_articles_for_temas, work_dir)
+            top_8 = sorted(
+                all_articles_for_temas,
+                key=lambda x: (x.get("seo_score", 0), x.get("timestamp", 0)),
+                reverse=True
+            )[:8]
+        else:
+            print("\n[!] No hay artículos disponibles para generar Temas del Día.")
 
     return {
         "El Tiempo": articles if run_el_tiempo else [],

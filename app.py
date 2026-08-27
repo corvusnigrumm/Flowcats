@@ -126,7 +126,7 @@ class RunRequest(BaseModel):
 
 
 def format_article_topic(art: dict, source_name: str) -> dict:
-    title = str(art.get("titulo_flowcard") or art.get("titulo_raw") or "Sin título").strip()
+    title = str(art.get("titulo_temas_25") or art.get("titulo_flowcard") or art.get("titulo_3") or art.get("titulo_raw") or "Sin título").strip()
     category = str(art.get("categoria") or "GENERAL").strip().upper()
     score = int(art.get("seo_score") or 85)
     score = max(50, min(99, score))
@@ -138,12 +138,13 @@ def format_article_topic(art: dict, source_name: str) -> dict:
         words = [w.lower() for w in title.split() if len(w) > 4][:3]
         keywords = words
         
+    medio_src = art.get("medio") or art.get("source_name") or source_name
     return {
         "t": title,
         "c": category,
         "h": score,
         "k": keywords[:3],
-        "s": source_name
+        "s": medio_src
     }
 
 
@@ -186,11 +187,12 @@ def background_scraper_task(selected_sources: List[str], process_type: str, incl
             
             if run_el_tiempo and raw_et:
                 topics_et = [format_article_topic(a, "El Tiempo") for a in raw_et]
-                if run_temas and raw_top:
-                    topics_top = [format_article_topic(a, "El Tiempo") for a in raw_top]
             
             if run_portafolio and raw_pf:
                 topics_pf = [format_article_topic(a, "Portafolio") for a in raw_pf]
+
+            if run_temas and raw_top:
+                topics_top = [format_article_topic(a, a.get("medio") or "El Tiempo") for a in raw_top]
 
         # Detectar archivos generados según el tipo de proceso y medio
         files = []
@@ -200,7 +202,8 @@ def background_scraper_task(selected_sources: List[str], process_type: str, incl
             if run_portafolio and os.path.exists(os.path.join(BASE_DIR, "Portafolio.xlsx")):
                 files.append("Portafolio.xlsx")
 
-        if run_temas and run_el_tiempo:
+        # Bug 5 fix: detectar TEMAS DEL DÍA.xlsx sin importar qué medio fue seleccionado
+        if run_temas:
             for temas_name in ["TEMAS DEL DÍA.xlsx", "TEMAS DEL DIA.xlsx"]:
                 if os.path.exists(os.path.join(BASE_DIR, temas_name)):
                     files.append(temas_name)
