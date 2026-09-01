@@ -1,363 +1,4 @@
-# -*- coding: utf-8 -*-
-"""
-Flowcats v2.0 · Servidor Web para Render y Plataformas Cloud / Local
-Mesa de Redacción Automatizada:
-- Procesos separados e independientes: Flowcards SEO (máx 3 palabras) y Temas del Día (Top 8 <= 25c).
-- Selección flexible de medios: El Tiempo y/o Portafolio.
-- IA Groq con modelo openai/gpt-oss-120b para titulares periodísticos de alto impacto.
-- Módulo Anti-Sleep Guard integrado para Render Cloud.
-- Descarga directa e individual de libros Excel.
-"""
-
-import os
-import sys
-import io
-import json
-import threading
-import time
-import urllib.request
-import urllib.parse
-from typing import List, Dict, Any, Optional
-from fastapi import FastAPI, BackgroundTasks, HTTPException
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DIST_DIR = os.path.join(BASE_DIR, "dist")
-os.makedirs(DIST_DIR, exist_ok=True)
-if BASE_DIR not in sys.path:
-    sys.path.insert(0, BASE_DIR)
-
-from automatizacion_santamaria import (
-    run_scraper_selected,
-    get_groq_api_key,
-    export_temas_del_dia
-)
-
-app = FastAPI(
-    title="Flowcats v2.0 — Sala de Redacción Automatizada",
-    description="Plataforma Web para extracción de Flowcards y Temas del Día con IA Groq.",
-    version="2.0.0"
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Estado global de ejecución
-state_lock = threading.Lock()
-execution_state: Dict[str, Any] = {
-    "running": False,
-    "progress": 0,
-    "status": "Sistema en espera · listo para ejecutar",
-    "logs": [
-        "[✓] Flowcats v2.0 inicializado.",
-        "[*] Esperando instrucciones del operador..."
-    ],
-    "last_updated": time.time(),
-    "files_generated": [],
-    "topics": {
-        "top": [],
-        "El Tiempo": [],
-        "Portafolio": []
-    }
-}
-
-class LogRedirector:
-    def __init__(self, original_stdout):
-        self.original_stdout = original_stdout
-
-    def write(self, message):
-        if self.original_stdout:
-            try:
-                self.original_stdout.write(message)
-                self.original_stdout.flush()
-            except Exception:
-                pass
-
-        if message and str(message).strip():
-            msg_str = str(message).rstrip()
-            with state_lock:
-                execution_state["logs"].append(msg_str)
-                if len(execution_state["logs"]) > 600:
-                    execution_state["logs"] = execution_state["logs"][-600:]
-                
-                import re
-                match = re.search(r'\(([0-9]+)%\)', msg_str)
-                if match:
-                    try:
-                        p = int(match.group(1))
-                        execution_state["progress"] = p
-                        if p < 100:
-                            execution_state["status"] = f"Procesando noticias... ({p}%)"
-                    except Exception:
-                        pass
-                
-                if "INICIANDO EXTRACCIÓN PARA: El Tiempo" in msg_str or "INICIANDO EXTRACCION PARA: El Tiempo" in msg_str:
-                    execution_state["status"] = "Extrayendo noticias de El Tiempo..."
-                elif "INICIANDO EXTRACCIÓN PARA: Portafolio" in msg_str or "INICIANDO EXTRACCION PARA: Portafolio" in msg_str:
-                    execution_state["status"] = "Extrayendo grupos económicos de Portafolio..."
-                elif "PROCESANDO TEMAS DEL DÍA" in msg_str:
-                    execution_state["status"] = "Generando Temas del Día (Top 8 <= 25c con Groq openai/gpt-oss-120b)..."
-                elif "Archivo El Tiempo.xlsx generado" in msg_str:
-                    execution_state["status"] = "Empaquetando El Tiempo.xlsx..."
-                elif "Archivo Portafolio.xlsx generado" in msg_str:
-                    execution_state["status"] = "Empaquetando Portafolio.xlsx..."
-                elif "TEMAS DEL DÍA.xlsx" in msg_str and "Guardado" in msg_str:
-                    execution_state["status"] = "Guardando TEMAS DEL DÍA.xlsx..."
-                
-                execution_state["last_updated"] = time.time()
-
-    def flush(self):
-        if self.original_stdout:
-            try:
-                self.original_stdout.flush()
-            except Exception:
-                pass
-
-
-class RunRequest(BaseModel):
-    selected_sources: List[str] = ["El Tiempo", "Portafolio"]
-    process_type: str = "both"  # "flowcards", "temas_del_dia", "both"
-    include_amp: bool = True
-
-
-def format_article_topic(art: dict, source_name: str) -> dict:
-    title = str(art.get("titulo_temas_25") or art.get("titulo_flowcard") or art.get("titulo_3") or art.get("titulo_raw") or "Sin título").strip()
-    category = str(art.get("categoria") or "GENERAL").strip().upper()
-    score = int(art.get("seo_score") or 85)
-    score = max(50, min(99, score))
-    
-    keywords = art.get("keywords") or []
-    if not keywords and art.get("titulo_flowcard"):
-        keywords = [w.lower() for w in art["titulo_flowcard"].split() if len(w) > 2][:3]
-    if not keywords and title:
-        words = [w.lower() for w in title.split() if len(w) > 4][:3]
-        keywords = words
-        
-    medio_src = art.get("medio") or art.get("source_name") or source_name
-    return {
-        "t": title,
-        "c": category,
-        "h": score,
-        "k": keywords[:3],
-        "s": medio_src
-    }
-
-
-def background_scraper_task(selected_sources: List[str], process_type: str, include_amp: bool):
-    global execution_state
-    original_stdout = sys.stdout
-    redirector = LogRedirector(original_stdout)
-    
-    run_flowcards = process_type in ("flowcards", "both")
-    run_temas = process_type in ("temas_del_dia", "both")
-    run_el_tiempo = "El Tiempo" in selected_sources
-    run_portafolio = "Portafolio" in selected_sources
-
-    with state_lock:
-        execution_state["running"] = True
-        execution_state["progress"] = 2
-        execution_state["status"] = "Inicializando motores de extracción..."
-        execution_state["logs"] = [
-            "=== INICIANDO PROCESO EN FLOWCATS WEB ===",
-            f"[*] Modo de proceso: {process_type.upper()} ({'Flowcards (máx 3 palabras)' if run_flowcards else ''}{' + ' if run_flowcards and run_temas else ''}{'Temas del Día (<= 25 chars)' if run_temas else ''})",
-            f"[*] Fuentes seleccionadas: {', '.join(selected_sources)}",
-            f"[*] Motor IA: Groq (openai/gpt-oss-120b) · {'Conectado' if get_groq_api_key() else 'Modo heurístico'}",
-            f"[*] Incluir URLs AMP: {'Sí' if include_amp else 'No'}"
-        ]
-        execution_state["files_generated"] = []
-        execution_state["topics"] = {"top": [], "El Tiempo": [], "Portafolio": []}
-
-    sys.stdout = redirector
-    sys.stderr = redirector
-    try:
-        results = run_scraper_selected(selected_sources, process_type=process_type, include_amp=include_amp)
-        
-        topics_et = []
-        topics_pf = []
-        topics_top = []
-
-        if isinstance(results, dict):
-            raw_et = results.get("El Tiempo", [])
-            raw_pf = results.get("Portafolio", [])
-            raw_top = results.get("top", [])
-            
-            if run_el_tiempo and raw_et:
-                topics_et = [format_article_topic(a, "El Tiempo") for a in raw_et]
-            
-            if run_portafolio and raw_pf:
-                topics_pf = [format_article_topic(a, "Portafolio") for a in raw_pf]
-
-            if run_temas and raw_top:
-                topics_top = [format_article_topic(a, a.get("medio") or "El Tiempo") for a in raw_top]
-
-        # Detectar archivos generados según el tipo de proceso y medio (en dist o raíz)
-        files = []
-        if run_flowcards:
-            if run_el_tiempo and (os.path.exists(os.path.join(DIST_DIR, "El Tiempo.xlsx")) or os.path.exists(os.path.join(BASE_DIR, "El Tiempo.xlsx"))):
-                files.append("El Tiempo.xlsx")
-            if run_portafolio and (os.path.exists(os.path.join(DIST_DIR, "Portafolio.xlsx")) or os.path.exists(os.path.join(BASE_DIR, "Portafolio.xlsx"))):
-                files.append("Portafolio.xlsx")
-
-        # Bug 5 fix: detectar TEMAS DEL DÍA.xlsx sin importar qué medio fue seleccionado
-        if run_temas:
-            for temas_name in ["TEMAS DEL DÍA.xlsx", "TEMAS DEL DIA.xlsx"]:
-                if os.path.exists(os.path.join(DIST_DIR, temas_name)) or os.path.exists(os.path.join(BASE_DIR, temas_name)):
-                    files.append(temas_name)
-                    break
-
-        with state_lock:
-            execution_state["progress"] = 100
-            execution_state["status"] = "Proceso completado exitosamente"
-            execution_state["files_generated"] = files
-            execution_state["topics"] = {
-                "top": topics_top,
-                "El Tiempo": topics_et,
-                "Portafolio": topics_pf
-            }
-            execution_state["logs"].append("=== PROCESO COMPLETADO EXITOSAMENTE ===")
-            
-    except Exception as exc:
-        with state_lock:
-            execution_state["status"] = f"Error: {exc}"
-            execution_state["logs"].append(f"[ERROR CRÍTICO] {exc}")
-    finally:
-        sys.stdout = original_stdout
-        sys.stderr = original_stderr
-        with state_lock:
-            execution_state["running"] = False
-            execution_state["last_updated"] = time.time()
-
-
-@app.post("/api/run")
-def api_run_scraper(req: RunRequest, background_tasks: BackgroundTasks):
-    if not req.selected_sources:
-        raise HTTPException(status_code=400, detail="Debes seleccionar al menos una fuente de noticias (El Tiempo o Portafolio).")
-    
-    if req.process_type not in ("flowcards", "temas_del_dia", "both"):
-        req.process_type = "both"
-
-    with state_lock:
-        if execution_state["running"]:
-            raise HTTPException(status_code=400, detail="Ya hay un proceso de extracción en ejecución.")
-        execution_state["running"] = True
-
-    background_tasks.add_task(background_scraper_task, req.selected_sources, req.process_type, req.include_amp)
-    return {
-        "message": "Proceso iniciado en segundo plano",
-        "sources": req.selected_sources,
-        "process_type": req.process_type,
-        "include_amp": req.include_amp
-    }
-
-
-@app.get("/api/status")
-def api_get_status():
-    with state_lock:
-        has_groq = bool(get_groq_api_key())
-        return {
-            "running": execution_state["running"],
-            "progress": execution_state["progress"],
-            "status": execution_state["status"],
-            "logs": execution_state["logs"],
-            "groq_active": has_groq,
-            "files": execution_state["files_generated"],
-            "topics": execution_state["topics"]
-        }
-
-
-@app.get("/api/download/{filename:path}")
-def api_download_file(filename: str):
-    filename_clean = urllib.parse.unquote(filename).strip()
-    filename_clean = os.path.basename(filename_clean)
-    
-    allowed_files = [
-        "El Tiempo.xlsx",
-        "Portafolio.xlsx",
-        "TEMAS DEL DÍA.xlsx",
-        "TEMAS DEL DIA.xlsx",
-        "TEMAS_DEL_DIA.xlsx"
-    ]
-    
-    found_path = None
-    for cand in allowed_files:
-        if cand.lower() == filename_clean.lower():
-            p_dist = os.path.join(DIST_DIR, cand)
-            p_base = os.path.join(BASE_DIR, cand)
-            if os.path.exists(p_dist):
-                found_path = p_dist
-                filename_clean = cand
-                break
-            elif os.path.exists(p_base):
-                found_path = p_base
-                filename_clean = cand
-                break
-    
-    if not found_path:
-        for p in [os.path.join(DIST_DIR, filename_clean), os.path.join(BASE_DIR, filename_clean)]:
-            if os.path.exists(p) and filename_clean.endswith(".xlsx"):
-                found_path = p
-                break
-
-    if not found_path or not os.path.exists(found_path):
-        raise HTTPException(status_code=404, detail=f"El archivo '{filename_clean}' no fue encontrado en el servidor.")
-
-    return FileResponse(
-        path=found_path,
-        filename=filename_clean,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-
-
-@app.get("/ping")
-@app.get("/health")
-@app.get("/api/health")
-def health_check():
-    return {
-        "status": "ok",
-        "app": "Flowcats Web",
-        "version": "2.0.0",
-        "keep_alive": "active",
-        "timestamp": time.time()
-    }
-
-
-@app.get("/", response_class=HTMLResponse)
-def root_page():
-    return HTML_CONTENT
-
-
-# Background self-pinging thread for Render
-def _start_internal_keep_alive():
-    external_url = os.environ.get("RENDER_EXTERNAL_URL") or os.environ.get("KEEP_ALIVE_URL")
-    if not external_url:
-        return
-    
-    def _worker():
-        time.sleep(60)  # Esperar a que el servidor termine de arrancar
-        target = f"{external_url.rstrip('/')}/health"
-        print(f"[Anti-Sleep Guard] Iniciado worker de auto-ping hacia {target} cada 10 min.")
-        while True:
-            try:
-                req = urllib.request.Request(target, headers={"User-Agent": "Flowcats-SelfPing/2.0"})
-                with urllib.request.urlopen(req, timeout=20) as resp:
-                    pass
-            except Exception:
-                pass
-            time.sleep(600)  # Cada 10 minutos
-            
-    t = threading.Thread(target=_worker, daemon=True)
-    t.start()
-
-_start_internal_keep_alive()
-
-
-HTML_CONTENT = r'''<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
@@ -526,31 +167,6 @@ button{font-family:inherit}
 }
 .panel.in{opacity:1;transform:none}
 .panel:hover{border-color:var(--border-hi)}
-
-
-.modes-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
-.mode-card{
-  display:flex;align-items:center;justify-content:space-between;gap:8px;
-  padding:12px 13px;border-radius:8px;cursor:pointer;user-select:none;
-  background:var(--panel-deep);border:1px solid var(--border);border-left:3px solid transparent;
-  transition:transform .25s,border-color .25s,background .25s,box-shadow .25s;
-  position:relative;
-}
-.mode-card:hover{transform:translateY(-2px);border-color:var(--border-hi);border-left-color:rgba(0,250,154,.4)}
-.mode-card input{position:absolute;opacity:0;pointer-events:none}
-.mode-card.selected{
-  border-left-color:var(--spring);
-  background:linear-gradient(90deg,rgba(16,185,129,.1),rgba(16,185,129,.02)),var(--panel-deep);
-}
-.mode-card.locked{opacity:.5;pointer-events:none}
-.mode-card.selected .sc-check{
-  background:var(--spring);border-color:transparent;color:#04120C;
-  box-shadow:0 0 13px rgba(0,250,154,.5);transform:scale(1.06);
-}
-.sec-subhead{
-  font-family:var(--mono);font-size:10px;letter-spacing:1.8px;
-  color:var(--faint);text-transform:uppercase;margin-bottom:8px;
-}
 
 /* Etiqueta numerada de sección */
 .panel-tag{
@@ -960,37 +576,9 @@ button{font-family:inherit}
     <section class="panel" aria-labelledby="cfgTag">
       <div class="panel-tag" id="cfgTag"><span class="num">01</span> Configuración de extracción</div>
 
-      <!-- 1.1 Tipo de Proceso -->
-      <div class="sec-subhead"><i class="fa-solid fa-sliders"></i> Tipo de Proceso</div>
-      <div class="modes-grid">
-        <label class="mode-card selected" id="modeCardFlowcards">
-          <input type="checkbox" id="checkFlowcards" value="flowcards" checked>
-          <span class="sc-box">
-            <span style="font-size:13.5px;font-weight:700;color:var(--paper);display:flex;align-items:center;gap:6px;">
-              <i class="fa-solid fa-layer-group" style="color:var(--spring)"></i> Flowcards
-            </span>
-            <span class="sc-sub">Máx 3 palabras clave</span>
-          </span>
-          <span class="sc-check"><i class="fa-solid fa-check"></i></span>
-        </label>
-
-        <label class="mode-card selected" id="modeCardTemas">
-          <input type="checkbox" id="checkTemas" value="temas_del_dia" checked>
-          <span class="sc-box">
-            <span style="font-size:13.5px;font-weight:700;color:var(--paper);display:flex;align-items:center;gap:6px;">
-              <i class="fa-solid fa-star" style="color:var(--amber)"></i> Temas del Día
-            </span>
-            <span class="sc-sub">Top 8 &le; 25 caracteres</span>
-          </span>
-          <span class="sc-check"><i class="fa-solid fa-check"></i></span>
-        </label>
-      </div>
-
-      <!-- 1.2 Medio Informativo -->
-      <div class="sec-subhead"><i class="fa-solid fa-newspaper"></i> Medio Informativo</div>
       <div class="sources-grid">
-        <label class="source-card selected" id="sourceCardElTiempo">
-          <input type="checkbox" value="El Tiempo" id="checkElTiempo" checked>
+        <label class="source-card selected">
+          <input type="checkbox" value="El Tiempo" checked>
           <span class="sc-box">
             <span class="sc-mast et">EL TIEMPO</span>
             <span class="sc-sub">22 categorías · cubrimiento nacional</span>
@@ -998,8 +586,8 @@ button{font-family:inherit}
           <span class="sc-check"><i class="fa-solid fa-check"></i></span>
         </label>
 
-        <label class="source-card" id="sourceCardPortafolio">
-          <input type="checkbox" value="Portafolio" id="checkPortafolio">
+        <label class="source-card">
+          <input type="checkbox" value="Portafolio">
           <span class="sc-box">
             <span class="sc-mast pf">PORTAFOLIO</span>
             <span class="sc-sub">5 grupos económicos y empresariales</span>
@@ -1022,8 +610,8 @@ button{font-family:inherit}
       <button class="btn-run" id="runBtn">
         <i class="fa-solid fa-bolt"></i><span>Ejecutar automatización</span>
       </button>
-      <p class="run-hint" id="runHint"><i class="fa-solid fa-triangle-exclamation"></i> Selecciona al menos un proceso (Flowcards/Temas) y un medio antes de ejecutar.</p>
-      <p class="etiqueta">— IA: openai/gpt-oss-120b &middot; Flowcards (máx 3 palabras clave) | Temas del Día (máx 25 caracteres).</p>
+      <p class="run-hint" id="runHint"><i class="fa-solid fa-triangle-exclamation"></i> Marca al menos una fuente antes de ejecutar.</p>
+      <p class="etiqueta">— Consejo de la mesa: ejecuta antes de las 9 a.&nbsp;m. y el gato pilla la agenda del día completa.</p>
     </section>
 
     <div class="stack">
@@ -1156,9 +744,6 @@ function cacheEls(){
   els.mastDate=$('#mastDate');    els.mastEdition=$('#mastEdition');
   els.stepperSteps=$$('.stepper .step');
   els.sourceCards=$$('.source-card');
-  els.modeCards=$$('.mode-card');
-  els.checkFlowcards=$('#checkFlowcards');
-  els.checkTemas=$('#checkTemas');
 }
 
 /* ------------------ Estado ------------------ */
@@ -1763,31 +1348,14 @@ async function downloadAll(){
 const getSelectedSources = () =>
   els.sourceCards.map(c => c.querySelector('input')).filter(i => i.checked).map(i => i.value);
 
-const getSelectedModes = () =>
-  els.modeCards.map(c => c.querySelector('input')).filter(i => i.checked).map(i => i.value);
-
-function getProcessType(){
-  const modes = getSelectedModes();
-  if (modes.includes('flowcards') && modes.includes('temas_del_dia')) return 'both';
-  if (modes.includes('flowcards')) return 'flowcards';
-  if (modes.includes('temas_del_dia')) return 'temas_del_dia';
-  return 'both';
-}
-
 function syncRunControls(){
-  const sources = getSelectedSources();
-  const modes = getSelectedModes();
-  const isValid = sources.length > 0 && modes.length > 0;
-  els.runBtn.disabled = State.running || !isValid;
-  els.runHint.classList.toggle('show', !State.running && !isValid);
+  const sel = getSelectedSources();
+  els.runBtn.disabled = State.running || sel.length === 0;
+  els.runHint.classList.toggle('show', !State.running && sel.length === 0);
 }
 
 function setRunningLock(on){
   els.sourceCards.forEach(c => {
-    c.querySelector('input').disabled = on;
-    c.classList.toggle('locked', on);
-  });
-  els.modeCards.forEach(c => {
     c.querySelector('input').disabled = on;
     c.classList.toggle('locked', on);
   });
@@ -1893,7 +1461,7 @@ async function runFlow(){
   if (State.running) return;
   const sources = getSelectedSources();
   if (!sources.length){
-    Toast.warn('Selecciona al menos un proceso (Flowcards/Temas) y un medio antes de ejecutar.');
+    Toast.warn('Marca al menos una fuente antes de ejecutar.');
     return;
   }
 
@@ -1903,7 +1471,6 @@ async function runFlow(){
   try {
     const res = await API.run({
       selected_sources: sources,
-      process_type: getProcessType(),
       include_amp: els.amp.checked,
     });
 
@@ -1937,14 +1504,6 @@ function bindEvents(){
   els.downloadAll.addEventListener('click', downloadAll);
 
   els.sourceCards.forEach(card => {
-    const input = card.querySelector('input');
-    input.addEventListener('change', () => {
-      card.classList.toggle('selected', input.checked);
-      syncRunControls();
-    });
-  });
-
-  els.modeCards.forEach(card => {
     const input = card.querySelector('input');
     input.addEventListener('change', () => {
       card.classList.toggle('selected', input.checked);
@@ -2027,11 +1586,3 @@ document.addEventListener('DOMContentLoaded', async () => {
 </script>
 </body>
 </html>
-'''
-
-
-if __name__ == "__main__":
-    import uvicorn
-    port = int(os.environ.get("PORT", 8000))
-    print(f"[OK] Iniciando Flowcats v2.0 Web en puerto {port}...")
-    uvicorn.run("app:app", host="0.0.0.0", port=port, reload=False)

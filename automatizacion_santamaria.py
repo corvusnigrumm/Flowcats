@@ -27,8 +27,11 @@ import io
 import re
 import os
 import json
+import time
+import urllib.parse
 from datetime import datetime
 from email.utils import parsedate_to_datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from typing import Dict, TypedDict
 
@@ -80,18 +83,17 @@ SITES: Dict[str, SiteConfig] = {
 }
 
 TREND_KEYWORDS = {
-    "crisis", "reforma", "elecciones", "inflacion", "inflacion", "dolar", "dolar",
-    "subsidio", "impuestos", "pension", "pension", "salario", "empleo", "desempleo",
-    "salud", "seguridad", "justicia", "guerra", "arancel", "precio", "precios",
-    "petroleo", "petroleo", "tecnologia", "tecnologia", "inteligencia artificial",
-    "ia", "seleccion", "seleccion", "futbol", "futbol", "escandalo", "escandalo",
-    "historico", "historico", "record", "record", "viral", "denuncia"
+    "crisis", "reforma", "elecciones", "inflacion", "dolar", "subsidio", "impuestos",
+    "pension", "salario", "empleo", "desempleo", "salud", "seguridad", "justicia",
+    "guerra", "arancel", "precio", "precios", "petroleo", "tecnologia",
+    "inteligencia artificial", "ia", "seleccion", "futbol", "escandalo", "historico",
+    "record", "viral", "denuncia",
 }
 
 SEO_KEYWORDS = {
-    "como", "como", "que", "que", "por que", "por que", "claves", "guia", "guia",
-    "paso a paso", "explicamos", "esto significa", "fechas", "requisitos",
-    "quienes", "quienes", "cuando", "cuando", "precio", "precios", "ranking"
+    "como", "que", "por que", "claves", "guia", "paso a paso", "explicamos",
+    "esto significa", "fechas", "requisitos", "quienes", "cuando", "precio",
+    "precios", "ranking",
 }
 
 CATEGORY_POTENTIAL = {
@@ -471,6 +473,10 @@ def analyze_with_groq(article: dict) -> dict | None:
                     # Fallback si la IA devuelve algo vacío o sin sentido (<2 palabras)
                     if not titulo_flow or len(titulo_flow.split()) < 2:
                         titulo_flow = clean_and_format_title(raw_title, max_words=5)
+
+                    # Regla de negocio: un titular Flowcard NUNCA supera 5 palabras
+                    if len(titulo_flow.split()) > 5:
+                        titulo_flow = clean_and_format_title(raw_title, max_words=5)
                     
                     return {
                         "seo_score": score,
@@ -578,17 +584,10 @@ def generate_temas_del_dia_headline(article: dict) -> str:
     # Fallback heurístico si no hay IA
     return shorten_to_25_chars(raw_title)
 
-def export_temas_del_dia(articles: list, work_dir: str) -> str | None:
-    """
-    Selecciona las mejores 8 noticias de El Tiempo / Portafolio, genera para cada una un titular de <=25 caracteres con IA Groq
-    y actualiza la plantilla 'TEMAS DEL DÍA.xlsx' en la carpeta dist.
-    """
-    if not articles:
-        print("\n[!] No hay artículos para generar Temas del Día.")
-        return None
-
+def resolve_dirs():
+    """Resuelve base_dir y dist_dir según el modo de ejecución (script o .exe PyInstaller).
+    Centraliza la lógica que antes se repetía en varios puntos del programa."""
     if getattr(sys, 'frozen', False):
-        # Modo .exe PyInstaller: sys.executable → ruta real del .exe → carpeta dist
         base_dir = os.path.dirname(os.path.abspath(sys.executable))
         dist_dir = base_dir
     else:
@@ -598,7 +597,22 @@ def export_temas_del_dia(articles: list, work_dir: str) -> str | None:
             base_dir = os.getcwd()
         dist_dir = os.path.join(base_dir, "dist")
     os.makedirs(dist_dir, exist_ok=True)
+    return base_dir, dist_dir
 
+
+MAX_FETCH_WORKERS = 6
+
+
+def export_temas_del_dia(articles: list, work_dir: str) -> str | None:
+    """
+    Selecciona las mejores 8 noticias de El Tiempo / Portafolio, genera para cada una un titular de <=25 caracteres con IA Groq
+    y actualiza la plantilla 'TEMAS DEL DÍA.xlsx' en la carpeta dist.
+    """
+    if not articles:
+        print("\n[!] No hay artículos para generar Temas del Día.")
+        return None
+
+    base_dir, dist_dir = resolve_dirs()
     target_file = os.path.join(dist_dir, "TEMAS DEL DÍA.xlsx")
 
     # Buscar plantilla existente en dist o en la raíz
@@ -652,9 +666,15 @@ def export_temas_del_dia(articles: list, work_dir: str) -> str | None:
             ws.column_dimensions["C"].width = 35
             ws.column_dimensions["D"].width = 65
 
+        used_titles = set()
         for idx, art in enumerate(top_8, 1):
             row = idx + 2  # Filas 3 a 10
             titular_25 = generate_temas_del_dia_headline(art)
+            if titular_25.lower() in used_titles:
+                titular_25 = shorten_to_25_chars(art.get("titulo_raw", ""))
+                if titular_25.lower() in used_titles:
+                    titular_25 = shorten_to_25_chars(f"{titular_25} {idx}")
+            used_titles.add(titular_25.lower())
             art["titulo_temas_25"] = titular_25
             url_target = art.get("url_amp") or art.get("url_original", "")
 
@@ -685,7 +705,6 @@ def export_temas_del_dia(articles: list, work_dir: str) -> str | None:
         return None
     except Exception as e:
         print(f"\n[ERROR] Falló la exportación de Temas del Día: {e}")
-        return None
         return None
 
 
@@ -749,14 +768,26 @@ def is_subscriber_only(article_url: str) -> bool:
 # SCRAPING
 # ─────────────────────────────────────────────
 
+def _request_with_retry(url: str, tries: int = 3, timeout: int = 15) -> requests.Response | None:
+    """GET con reintentos ante fallos transitorios de red (timeout, 5xx, 408)."""
+    for attempt in range(1, tries + 1):
+        try:
+            resp = requests.get(url, headers=HEADERS, timeout=timeout)
+            resp.raise_for_status()
+            return resp
+        except requests.RequestException:
+            if attempt >= tries:
+                return None
+            time.sleep(1.2 * attempt)
+    return None
+
+
 def fetch_top_article(feed_url: str, label: str, url_base: str, seen_urls: set, check_paywall: bool = False) -> dict | None:
     """Extrae el primer articulo valido de un feed RSS (el mas reciente).
     Si check_paywall=True, verifica que no sea exclusivo para suscriptores."""
     print(f"\n>> [{label}] Buscando en {feed_url}")
-    try:
-        resp = requests.get(feed_url, headers=HEADERS, timeout=15)
-        resp.raise_for_status()
-    except requests.RequestException as exc:
+    resp = _request_with_retry(feed_url)
+    if resp is None:
         print(f"   [!] Omitido (No accesible o no existe el feed).")
         return None
 
@@ -785,7 +816,11 @@ def fetch_top_article(feed_url: str, label: str, url_base: str, seen_urls: set, 
         if not art_url:
             guid_el = item.find("guid")
             art_url = _get_text(guid_el)
-            
+
+        if art_url and not art_url.startswith(("http://", "https://")):
+            # Resolver enlaces relativos usando el feed como base
+            art_url = urllib.parse.urljoin(feed_url, art_url)
+
         if not art_url:
             continue
             
@@ -1143,119 +1178,6 @@ def export_to_excel(articles: list, output_path: str, book_name: str, include_am
 # BLOQUE PRINCIPAL
 # ─────────────────────────────────────────────
 
-def run_scraper():
-    if hasattr(sys.stdout, "buffer"):
-        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-
-    print("=" * 60)
-    print("  AUTOMATIZACIÓN SANTAMARÍA — Generador de Flowcards")
-    print(f"  Fecha: {datetime.now().strftime('%Y-%m-%d %I:%M %p')}")
-    print("=" * 60)
-
-    # Cálculo de total de tareas para el porcentaje
-    total_tasks = sum(len(config["feeds"]) for config in SITES.values())
-    total_tasks += len(PORTAFOLIO_CONFIG.get("feeds_grouped", {}))
-    current_task = 0
-
-    # Directorio actual y dist
-    # PyInstaller one-file: sys.frozen=True y sys.executable → el .exe real en dist.
-    if getattr(sys, 'frozen', False):
-        dist_dir = os.path.dirname(os.path.abspath(sys.executable))
-        work_dir = os.path.dirname(dist_dir)
-    else:
-        try:
-            work_dir = os.path.dirname(os.path.abspath(__file__))
-        except NameError:
-            work_dir = os.getcwd()
-        dist_dir = os.path.join(work_dir, "dist")
-    os.makedirs(dist_dir, exist_ok=True)
-
-
-    history_file = os.path.join(dist_dir, "historial_urls.json")
-    if not os.path.exists(history_file) and os.path.exists(os.path.join(work_dir, "historial_urls.json")):
-        history_file = os.path.join(work_dir, "historial_urls.json")
-
-    global_seen_urls = set()
-    if os.path.exists(history_file):
-        try:
-            with open(history_file, "r", encoding="utf-8") as f:
-                global_seen_urls = set(json.load(f))
-        except Exception:
-            pass
-
-    # ── El Tiempo (feeds simples, con filtro de suscriptores) ──
-    for site_name, config in SITES.items():
-        print(f"\n\n--- INICIANDO EXTRACCIÓN PARA: {site_name} ---")
-        out_path = os.path.join(dist_dir, config["output_file"])
-        url_base = config["url_base"]
-        is_eltiempo = ("eltiempo" in url_base)
-        
-        articles = []
-        # Conjunto de deduplicacion propio para El Tiempo (copia del historial global)
-        seen_urls_et = set(global_seen_urls)
-        seen_titles_et = set()  # Dedup por titulo para El Tiempo
-        for cat_label, url in config["feeds"].items():
-            pct = int((current_task / total_tasks) * 100)
-            print(f"\nEspere un momento, estamos buscando noticias para sus Flowcards. ({pct}%)")
-            art = fetch_top_article(url, cat_label, url_base, seen_urls_et, check_paywall=is_eltiempo)
-            current_task += 1
-            if art:
-                title_key = art["titulo_raw"].strip().lower()
-                if title_key not in seen_titles_et:
-                    seen_titles_et.add(title_key)
-                    articles.append(art)
-                else:
-                    print(f"   [!] Omitido (titulo duplicado entre categorias): {art['titulo_raw'][:60]}")
-        # Agregar las URLs nuevas de El Tiempo al historial global
-        global_seen_urls.update(seen_urls_et)
-                
-        if not articles:
-            print(f"\n[!] No se encontraron articulos aptos para {site_name}.")
-            continue
-            
-        export_to_excel(articles, out_path, site_name)
-
-    # ── Portafolio (feeds agrupados, con filtro de suscriptores) ──
-    print(f"\n\n--- INICIANDO EXTRACCIÓN PARA: Portafolio ---")
-    p_config = PORTAFOLIO_CONFIG
-    p_out_path = os.path.join(dist_dir, str(p_config["output_file"]))
-    p_url_base = str(p_config["url_base"])
-    is_portafolio = ("portafolio" in p_url_base.lower())
-    
-    p_articles = []
-    # Conjunto de deduplicacion PROPIO para Portafolio (independiente de El Tiempo)
-    p_seen_urls = set(global_seen_urls)
-    p_seen_titles = set()  # Dedup por titulo entre grupos de Portafolio
-    feeds_grouped_dict: dict = p_config.get("feeds_grouped", {})  # type: ignore
-    for group_label, feed_list in feeds_grouped_dict.items():
-        pct = int((current_task / total_tasks) * 100)
-        print(f"\nEspere un momento, estamos buscando noticias para sus Flowcards. ({pct}%)")
-        art = fetch_top_from_group(feed_list, group_label, p_url_base, p_seen_urls, check_paywall=is_portafolio)
-        current_task += 1
-        if art:
-            title_key = art["titulo_raw"].strip().lower()
-            if title_key not in p_seen_titles:
-                p_seen_titles.add(title_key)
-                p_articles.append(art)
-            else:
-                print(f"   [!] Omitido (titulo duplicado entre grupos Portafolio): {art['titulo_raw'][:60]}")
-    # Agregar las URLs nuevas de Portafolio al historial global
-    global_seen_urls.update(p_seen_urls)
-    
-    # 100% al finalizar las búsquedas
-    print(f"\nEspere un momento, estamos buscando noticias para sus Flowcards. (100%)")
-
-    if p_articles:
-        export_to_excel(p_articles, p_out_path, "Portafolio")
-    else:
-        print(f"\n[!] No se encontraron articulos aptos para Portafolio.")
-
-    try:
-        with open(history_file, "w", encoding="utf-8") as f:
-            json.dump(list(global_seen_urls), f, indent=4)
-    except Exception as e:
-        print(f"\n[!] No se pudo guardar el historial: {e}")
-
 def run_scraper_selected(selected_sources=None, process_type: str = "both", include_amp: bool = True):
     if not selected_sources:
         selected_sources = ["El Tiempo", "Portafolio"]
@@ -1275,6 +1197,9 @@ def run_scraper_selected(selected_sources=None, process_type: str = "both", incl
     print(f"  Modo de Proceso: {process_type.upper()} | Fuentes: {', '.join(selected_sources)}")
     print("=" * 60)
 
+    if not get_groq_api_key():
+        print("\n[!] No se encontró GROQ_API_KEY — los titulares se generarán en MODO HEURÍSTICO (sin IA).")
+
     total_tasks = 0
     if run_el_tiempo:
         total_tasks += sum(len(config["feeds"]) for config in SITES.values())
@@ -1286,16 +1211,8 @@ def run_scraper_selected(selected_sources=None, process_type: str = "both", incl
 
     current_task = 0
     # PyInstaller one-file: sys.frozen=True y sys.executable → el .exe real en dist.
-    if getattr(sys, 'frozen', False):
-        dist_dir = os.path.dirname(os.path.abspath(sys.executable))
-        work_dir = os.path.dirname(dist_dir)
-    else:
-        try:
-            work_dir = os.path.dirname(os.path.abspath(__file__))
-        except NameError:
-            work_dir = os.getcwd()
-        dist_dir = os.path.join(work_dir, "dist")
-    os.makedirs(dist_dir, exist_ok=True)
+    _, dist_dir = resolve_dirs()
+    work_dir = os.path.dirname(dist_dir)
 
     history_file = os.path.join(dist_dir, "historial_urls.json")
     if not os.path.exists(history_file) and os.path.exists(os.path.join(work_dir, "historial_urls.json")):
@@ -1319,11 +1236,25 @@ def run_scraper_selected(selected_sources=None, process_type: str = "both", incl
 
             seen_urls_et = set(global_seen_urls)
             seen_titles_et = set()
-            for cat_label, url in config["feeds"].items():
-                pct = int((current_task / total_tasks) * 100)
-                print(f"\nEspere un momento, buscando noticias para {site_name} - {cat_label} ({pct}%)")
-                art = fetch_top_article(url, cat_label, url_base, seen_urls_et, check_paywall=is_eltiempo)
-                current_task += 1
+            cat_order = list(config["feeds"].items())
+            cat_results = {}
+            with ThreadPoolExecutor(max_workers=MAX_FETCH_WORKERS) as pool:
+                future_map = {
+                    pool.submit(fetch_top_article, url, cat_label, url_base, seen_urls_et, check_paywall=is_eltiempo): cat_label
+                    for cat_label, url in cat_order
+                }
+                for future in as_completed(future_map):
+                    cat_label = future_map[future]
+                    current_task += 1
+                    try:
+                        cat_results[cat_label] = future.result()
+                    except Exception as exc:
+                        print(f"   [!] Error en feed {cat_label}: {exc}")
+                        cat_results[cat_label] = None
+                    pct = int((current_task / total_tasks) * 100)
+                    print(f"\nEspere un momento, buscando noticias para {site_name} - {cat_label} ({pct}%)")
+            for cat_label, _ in cat_order:
+                art = cat_results.get(cat_label)
                 if art:
                     title_key = art["titulo_raw"].strip().lower()
                     if title_key not in seen_titles_et:
@@ -1402,7 +1333,6 @@ def run_scraper_selected(selected_sources=None, process_type: str = "both", incl
     }
 
 import threading
-import os
 
 try:
     import customtkinter as ctk
@@ -1891,19 +1821,8 @@ class FlowcatsApp(_BaseAppClass):
         self.log_box.configure(state="disabled")
 
     def open_excel_file(self, filename: str):
-        if getattr(sys, 'frozen', False):
-            # exe real está en dist → guardamos junto al exe
-            save_dir = os.path.dirname(os.path.abspath(sys.executable))
-        else:
-            try:
-                base_dir = os.path.dirname(os.path.abspath(__file__))
-            except NameError:
-                base_dir = os.getcwd()
-            save_dir = os.path.join(base_dir, "dist")
+        _, save_dir = resolve_dirs()
         path = os.path.join(save_dir, filename)
-        # fallback: mismo directorio del exe si no está en save_dir
-        if not os.path.exists(path) and getattr(sys, 'frozen', False):
-            path = os.path.join(os.path.dirname(os.path.abspath(sys.executable)), filename)
         if os.path.exists(path):
             try:
                 os.startfile(path)
@@ -1913,15 +1832,8 @@ class FlowcatsApp(_BaseAppClass):
             print(f"[!] El archivo '{filename}' aún no ha sido generado en dist.")
 
     def check_generated_files(self):
-        if getattr(sys, 'frozen', False):
-            save_dir = os.path.dirname(os.path.abspath(sys.executable))
-        else:
-            try:
-                base_dir = os.path.dirname(os.path.abspath(__file__))
-            except NameError:
-                base_dir = os.getcwd()
-            save_dir = os.path.join(base_dir, "dist")
-        
+        _, save_dir = resolve_dirs()
+
         def exists_file(name):
             return os.path.exists(os.path.join(save_dir, name))
 
