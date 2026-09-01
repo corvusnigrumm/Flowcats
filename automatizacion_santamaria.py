@@ -581,17 +581,40 @@ def generate_temas_del_dia_headline(article: dict) -> str:
 def export_temas_del_dia(articles: list, work_dir: str) -> str | None:
     """
     Selecciona las mejores 8 noticias de El Tiempo / Portafolio, genera para cada una un titular de <=25 caracteres con IA Groq
-    y actualiza la plantilla 'TEMAS DEL DÍA.xlsx'.
+    y actualiza la plantilla 'TEMAS DEL DÍA.xlsx' en la carpeta dist.
     """
     if not articles:
         print("\n[!] No hay artículos para generar Temas del Día.")
         return None
 
-    template_file = os.path.join(work_dir, "TEMAS DEL DÍA.xlsx")
-    if not os.path.exists(template_file):
-        template_file = os.path.join(work_dir, "TEMAS DEL DIA.xlsx")
-        if not os.path.exists(template_file):
-            template_file = "TEMAS DEL DÍA.xlsx"
+    if getattr(sys, 'frozen', False):
+        # Modo .exe PyInstaller: sys.executable → ruta real del .exe → carpeta dist
+        base_dir = os.path.dirname(os.path.abspath(sys.executable))
+        dist_dir = base_dir
+    else:
+        try:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+        except NameError:
+            base_dir = os.getcwd()
+        dist_dir = os.path.join(base_dir, "dist")
+    os.makedirs(dist_dir, exist_ok=True)
+
+    target_file = os.path.join(dist_dir, "TEMAS DEL DÍA.xlsx")
+
+    # Buscar plantilla existente en dist o en la raíz
+    template_candidates = [
+        target_file,
+        os.path.join(dist_dir, "TEMAS DEL DIA.xlsx"),
+        os.path.join(base_dir, "TEMAS DEL DÍA.xlsx"),
+        os.path.join(base_dir, "TEMAS DEL DIA.xlsx"),
+        os.path.join(work_dir, "TEMAS DEL DÍA.xlsx"),
+        os.path.join(work_dir, "TEMAS DEL DIA.xlsx"),
+    ]
+    template_file = None
+    for cand in template_candidates:
+        if os.path.exists(cand):
+            template_file = cand
+            break
 
     # Ordenar noticias por puntaje SEO o frescura y elegir las 8 mejores
     top_8 = sorted(
@@ -603,7 +626,7 @@ def export_temas_del_dia(articles: list, work_dir: str) -> str | None:
     print(f"\n--- PROCESANDO TEMAS DEL DÍA (Top 8 noticias con IA Groq) ---")
 
     try:
-        if os.path.exists(template_file):
+        if template_file and os.path.exists(template_file):
             wb = openpyxl.load_workbook(template_file)
             ws = wb.active
         else:
@@ -611,7 +634,6 @@ def export_temas_del_dia(articles: list, work_dir: str) -> str | None:
             wb = openpyxl.Workbook()
             ws = wb.active
             ws.title = "TEMAS DEL DÍA"
-            template_file = os.path.join(work_dir, "TEMAS DEL DÍA.xlsx")
             
             # Encabezados
             encabezados = ["RANKING", "CARACTERES", "TÍTULO (<= 25 chars)", "URL"]
@@ -655,14 +677,15 @@ def export_temas_del_dia(articles: list, work_dir: str) -> str | None:
             ws.cell(row=row, column=3, value="")
             ws.cell(row=row, column=4, value="")
 
-        wb.save(template_file)
-        print(f"\n[LISTO] Guardado 'TEMAS DEL DÍA.xlsx' con el Top 8 de noticias.")
-        return template_file
+        wb.save(target_file)
+        print(f"\n[LISTO] Guardado 'TEMAS DEL DÍA.xlsx' en dist con el Top 8 de noticias.")
+        return target_file
     except PermissionError:
-        print("\n[ERROR CRÍTICO] 'TEMAS DEL DÍA.xlsx' está abierto en Excel. Ciérrelo para actualizar.")
+        print("\n[ERROR CRÍTICO] 'TEMAS DEL DÍA.xlsx' en dist está abierto en Excel. Ciérrelo para actualizar.")
         return None
     except Exception as e:
         print(f"\n[ERROR] Falló la exportación de Temas del Día: {e}")
+        return None
         return None
 
 
@@ -1134,12 +1157,24 @@ def run_scraper():
     total_tasks += len(PORTAFOLIO_CONFIG.get("feeds_grouped", {}))
     current_task = 0
 
-    # Directorio actual
-    work_dir = os.path.dirname(os.path.abspath(__file__))
-    if not os.path.exists(work_dir):
-        work_dir = "./"
+    # Directorio actual y dist
+    # PyInstaller one-file: sys.frozen=True y sys.executable → el .exe real en dist.
+    if getattr(sys, 'frozen', False):
+        dist_dir = os.path.dirname(os.path.abspath(sys.executable))
+        work_dir = os.path.dirname(dist_dir)
+    else:
+        try:
+            work_dir = os.path.dirname(os.path.abspath(__file__))
+        except NameError:
+            work_dir = os.getcwd()
+        dist_dir = os.path.join(work_dir, "dist")
+    os.makedirs(dist_dir, exist_ok=True)
 
-    history_file = os.path.join(work_dir, "historial_urls.json")
+
+    history_file = os.path.join(dist_dir, "historial_urls.json")
+    if not os.path.exists(history_file) and os.path.exists(os.path.join(work_dir, "historial_urls.json")):
+        history_file = os.path.join(work_dir, "historial_urls.json")
+
     global_seen_urls = set()
     if os.path.exists(history_file):
         try:
@@ -1151,7 +1186,7 @@ def run_scraper():
     # ── El Tiempo (feeds simples, con filtro de suscriptores) ──
     for site_name, config in SITES.items():
         print(f"\n\n--- INICIANDO EXTRACCIÓN PARA: {site_name} ---")
-        out_path = os.path.join(work_dir, config["output_file"])
+        out_path = os.path.join(dist_dir, config["output_file"])
         url_base = config["url_base"]
         is_eltiempo = ("eltiempo" in url_base)
         
@@ -1183,7 +1218,7 @@ def run_scraper():
     # ── Portafolio (feeds agrupados, con filtro de suscriptores) ──
     print(f"\n\n--- INICIANDO EXTRACCIÓN PARA: Portafolio ---")
     p_config = PORTAFOLIO_CONFIG
-    p_out_path = os.path.join(work_dir, str(p_config["output_file"]))
+    p_out_path = os.path.join(dist_dir, str(p_config["output_file"]))
     p_url_base = str(p_config["url_base"])
     is_portafolio = ("portafolio" in p_url_base.lower())
     
@@ -1250,11 +1285,22 @@ def run_scraper_selected(selected_sources=None, process_type: str = "both", incl
         return {"El Tiempo": [], "Portafolio": [], "top": []}
 
     current_task = 0
-    work_dir = os.path.dirname(os.path.abspath(__file__))
-    if not os.path.exists(work_dir):
-        work_dir = "./"
+    # PyInstaller one-file: sys.frozen=True y sys.executable → el .exe real en dist.
+    if getattr(sys, 'frozen', False):
+        dist_dir = os.path.dirname(os.path.abspath(sys.executable))
+        work_dir = os.path.dirname(dist_dir)
+    else:
+        try:
+            work_dir = os.path.dirname(os.path.abspath(__file__))
+        except NameError:
+            work_dir = os.getcwd()
+        dist_dir = os.path.join(work_dir, "dist")
+    os.makedirs(dist_dir, exist_ok=True)
 
-    history_file = os.path.join(work_dir, "historial_urls.json")
+    history_file = os.path.join(dist_dir, "historial_urls.json")
+    if not os.path.exists(history_file) and os.path.exists(os.path.join(work_dir, "historial_urls.json")):
+        history_file = os.path.join(work_dir, "historial_urls.json")
+
     global_seen_urls = set()
     if os.path.exists(history_file):
         try:
@@ -1267,7 +1313,7 @@ def run_scraper_selected(selected_sources=None, process_type: str = "both", incl
     if run_el_tiempo:
         for site_name, config in SITES.items():
             print(f"\n\n--- INICIANDO EXTRACCIÓN PARA: {site_name} ---")
-            out_path = os.path.join(work_dir, config["output_file"])
+            out_path = os.path.join(dist_dir, config["output_file"])
             url_base = config["url_base"]
             is_eltiempo = ("eltiempo" in url_base)
 
@@ -1290,7 +1336,7 @@ def run_scraper_selected(selected_sources=None, process_type: str = "both", incl
             if articles:
                 if run_flowcards:
                     export_to_excel(articles, out_path, site_name, include_amp=include_amp)
-                    print(f"\n[+] Archivo {site_name}.xlsx generado exitosamente con {len(articles)} Flowcards.")
+                    print(f"\n[+] Archivo {site_name}.xlsx generado exitosamente con {len(articles)} Flowcards en carpeta dist.")
             else:
                 print(f"\n[!] No se encontró artículos aptos para {site_name}.")
 
@@ -1298,7 +1344,7 @@ def run_scraper_selected(selected_sources=None, process_type: str = "both", incl
     if run_portafolio:
         print(f"\n\n--- INICIANDO EXTRACCIÓN PARA: Portafolio ---")
         p_config = PORTAFOLIO_CONFIG
-        p_out_path = os.path.join(work_dir, str(p_config["output_file"]))
+        p_out_path = os.path.join(dist_dir, str(p_config["output_file"]))
         p_url_base = str(p_config["url_base"])
         is_portafolio = ("portafolio" in p_url_base.lower())
 
@@ -1322,7 +1368,7 @@ def run_scraper_selected(selected_sources=None, process_type: str = "both", incl
         if p_articles:
             if run_flowcards:
                 export_to_excel(p_articles, p_out_path, "Portafolio", include_amp=include_amp)
-                print(f"\n[+] Archivo Portafolio.xlsx generado exitosamente con {len(p_articles)} Flowcards.")
+                print(f"\n[+] Archivo Portafolio.xlsx generado exitosamente con {len(p_articles)} Flowcards en carpeta dist.")
         else:
             print(f"\n[!] No se encontraron artículos aptos para Portafolio.")
 
@@ -1340,7 +1386,7 @@ def run_scraper_selected(selected_sources=None, process_type: str = "both", incl
     if run_temas:
         all_articles_for_temas = articles if articles else p_articles
         if all_articles_for_temas:
-            export_temas_del_dia(all_articles_for_temas, work_dir)
+            export_temas_del_dia(all_articles_for_temas, dist_dir)
             top_8 = sorted(
                 all_articles_for_temas,
                 key=lambda x: (x.get("seo_score", 0), x.get("timestamp", 0)),
@@ -1845,24 +1891,45 @@ class FlowcatsApp(_BaseAppClass):
         self.log_box.configure(state="disabled")
 
     def open_excel_file(self, filename: str):
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        path = os.path.join(base_dir, filename)
+        if getattr(sys, 'frozen', False):
+            # exe real está en dist → guardamos junto al exe
+            save_dir = os.path.dirname(os.path.abspath(sys.executable))
+        else:
+            try:
+                base_dir = os.path.dirname(os.path.abspath(__file__))
+            except NameError:
+                base_dir = os.getcwd()
+            save_dir = os.path.join(base_dir, "dist")
+        path = os.path.join(save_dir, filename)
+        # fallback: mismo directorio del exe si no está en save_dir
+        if not os.path.exists(path) and getattr(sys, 'frozen', False):
+            path = os.path.join(os.path.dirname(os.path.abspath(sys.executable)), filename)
         if os.path.exists(path):
             try:
                 os.startfile(path)
             except Exception as e:
                 print(f"[!] No se pudo abrir {filename}: {e}")
         else:
-            print(f"[!] El archivo '{filename}' aún no ha sido generado.")
+            print(f"[!] El archivo '{filename}' aún no ha sido generado en dist.")
 
     def check_generated_files(self):
-        base_dir = os.path.dirname(os.path.abspath(__file__))
+        if getattr(sys, 'frozen', False):
+            save_dir = os.path.dirname(os.path.abspath(sys.executable))
+        else:
+            try:
+                base_dir = os.path.dirname(os.path.abspath(__file__))
+            except NameError:
+                base_dir = os.getcwd()
+            save_dir = os.path.join(base_dir, "dist")
         
-        if os.path.exists(os.path.join(base_dir, "El Tiempo.xlsx")):
+        def exists_file(name):
+            return os.path.exists(os.path.join(save_dir, name))
+
+        if exists_file("El Tiempo.xlsx"):
             self.btn_open_et.configure(fg_color="#1E3A5F", text_color="#60A5FA")
-        if os.path.exists(os.path.join(base_dir, "Portafolio.xlsx")):
+        if exists_file("Portafolio.xlsx"):
             self.btn_open_pf.configure(fg_color="#5F3A1E", text_color=self.C_AMBER)
-        if os.path.exists(os.path.join(base_dir, "TEMAS DEL DÍA.xlsx")) or os.path.exists(os.path.join(base_dir, "TEMAS DEL DIA.xlsx")):
+        if exists_file("TEMAS DEL DÍA.xlsx") or exists_file("TEMAS DEL DIA.xlsx"):
             self.btn_open_temas.configure(fg_color="#064E3B", text_color=self.C_SPRING)
 
     def update_progress(self, pct):

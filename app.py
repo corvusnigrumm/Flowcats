@@ -24,6 +24,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DIST_DIR = os.path.join(BASE_DIR, "dist")
+os.makedirs(DIST_DIR, exist_ok=True)
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
@@ -194,18 +196,18 @@ def background_scraper_task(selected_sources: List[str], process_type: str, incl
             if run_temas and raw_top:
                 topics_top = [format_article_topic(a, a.get("medio") or "El Tiempo") for a in raw_top]
 
-        # Detectar archivos generados según el tipo de proceso y medio
+        # Detectar archivos generados según el tipo de proceso y medio (en dist o raíz)
         files = []
         if run_flowcards:
-            if run_el_tiempo and os.path.exists(os.path.join(BASE_DIR, "El Tiempo.xlsx")):
+            if run_el_tiempo and (os.path.exists(os.path.join(DIST_DIR, "El Tiempo.xlsx")) or os.path.exists(os.path.join(BASE_DIR, "El Tiempo.xlsx"))):
                 files.append("El Tiempo.xlsx")
-            if run_portafolio and os.path.exists(os.path.join(BASE_DIR, "Portafolio.xlsx")):
+            if run_portafolio and (os.path.exists(os.path.join(DIST_DIR, "Portafolio.xlsx")) or os.path.exists(os.path.join(BASE_DIR, "Portafolio.xlsx"))):
                 files.append("Portafolio.xlsx")
 
         # Bug 5 fix: detectar TEMAS DEL DÍA.xlsx sin importar qué medio fue seleccionado
         if run_temas:
             for temas_name in ["TEMAS DEL DÍA.xlsx", "TEMAS DEL DIA.xlsx"]:
-                if os.path.exists(os.path.join(BASE_DIR, temas_name)):
+                if os.path.exists(os.path.join(DIST_DIR, temas_name)) or os.path.exists(os.path.join(BASE_DIR, temas_name)):
                     files.append(temas_name)
                     break
 
@@ -284,16 +286,22 @@ def api_download_file(filename: str):
     found_path = None
     for cand in allowed_files:
         if cand.lower() == filename_clean.lower():
-            p = os.path.join(BASE_DIR, cand)
-            if os.path.exists(p):
-                found_path = p
+            p_dist = os.path.join(DIST_DIR, cand)
+            p_base = os.path.join(BASE_DIR, cand)
+            if os.path.exists(p_dist):
+                found_path = p_dist
+                filename_clean = cand
+                break
+            elif os.path.exists(p_base):
+                found_path = p_base
                 filename_clean = cand
                 break
     
     if not found_path:
-        p = os.path.join(BASE_DIR, filename_clean)
-        if os.path.exists(p) and filename_clean.endswith(".xlsx"):
-            found_path = p
+        for p in [os.path.join(DIST_DIR, filename_clean), os.path.join(BASE_DIR, filename_clean)]:
+            if os.path.exists(p) and filename_clean.endswith(".xlsx"):
+                found_path = p
+                break
 
     if not found_path or not os.path.exists(found_path):
         raise HTTPException(status_code=404, detail=f"El archivo '{filename_clean}' no fue encontrado en el servidor.")
