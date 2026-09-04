@@ -152,6 +152,7 @@ def format_article_topic(art: dict, source_name: str) -> dict:
 def background_scraper_task(selected_sources: List[str], process_type: str, include_amp: bool):
     global execution_state
     original_stdout = sys.stdout
+    original_stderr = sys.stderr  # BUG FIX: capturar stderr antes de redirigir
     redirector = LogRedirector(original_stdout)
     
     run_flowcards = process_type in ("flowcards", "both")
@@ -1872,7 +1873,7 @@ function applyStatus(s){
     stopElapsed();
     setRunButton(false);
 
-    if (progress >= 100 && Array.isArray(s.files) && s.files.length){
+    if (Array.isArray(s.files) && s.files.length){
       if (State.files.join('|') !== s.files.join('|')) renderFiles(s.files);
       setProgress(100);
       els.actionText.textContent = s.status || 'Proceso completado exitosamente';
@@ -1880,7 +1881,7 @@ function applyStatus(s){
         Toast.success(s.status || 'Proceso completado exitosamente.', '✅ Edición lista');
         State.completionPending = false;
       }
-    } else if (!State.files.length){
+    } else if (!State.files.length && progress < 100){
       renderFilesEmpty();
     }
   }
